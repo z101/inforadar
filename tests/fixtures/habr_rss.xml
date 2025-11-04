@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Habr.com / Hub 'Python' / Articles</title>
+    <link>https://habr.com/ru/hubs/python/articles/</link>
+    <description>Articles from the 'Python' hub</description>
+    <item>
+      <title>Статья 1: Про Python</title>
+      <link>https://habr.com/ru/articles/100001/?utm_campaign=100001&amp;utm_source=habrahabr&amp;utm_medium=rss</link>
+      <guid isPermaLink="true">https://habr.com/ru/articles/100001/</guid>
+      <pubDate>Fri, 24 Oct 2025 10:00:00 GMT</pubDate>
+      <description>Это первая тестовая статья.</description>
+      <category>python</category>
+      <category>programming</category>
+    </item>
+    <item>
+      <title>Статья 2: Про asyncio</title>
+      <link>https://habr.com/ru/articles/100002/?utm_campaign=100002&amp;utm_source=habrahabr&amp;utm_medium=rss</link>
+      <guid isPermaLink="true">https://habr.com/ru/articles/100002/</guid>
+      <pubDate>Fri, 24 Oct 2025 11:00:00 GMT</pubDate>
+      <description>Это вторая тестовая статья.</description>
+      <category>python</category>
+      <category>asyncio</category>
+    </item>
+    <item>
+      <title>Еженедельный Дайджест новостей</title>
+      <link>https://habr.com/ru/articles/100003/?utm_campaign=100003&amp;utm_source=habrahabr&amp;utm_medium=rss</link>
+      <guid isPermaLink="true">https://habr.com/ru/articles/100003/</guid>
+      <pubDate>Fri, 24 Oct 2025 12:00:00 GMT</pubDate>
+      <description>Это третья статья, которую нужно отфильтровать.</description>
+      <category>news</category>
+    </item>
+  </channel>
+</rss>

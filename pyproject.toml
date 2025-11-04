@@ -1,0 +1,25 @@
+# pyproject.toml
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inforadar"
+version = "0.1.0"
+description = "Консольное приложение для сбора и разбора технических статей."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "typer[all]",
+    "rich",
+    "sqlalchemy",
+    "pyyaml",
+    "requests",
+    "beautifulsoup4",
+    "feedparser",
+]
+
+# САМАЯ ВАЖНАЯ ЧАСТЬ ДЛЯ КОМАНДЫ `ir`
+[project.scripts]
+ir = "inforadar.main:app"

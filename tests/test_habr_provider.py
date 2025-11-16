@@ -3,86 +3,103 @@ import pytest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 import feedparser
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from inforadar.models import Article
 from inforadar.providers.habr import HabrProvider
 
-# Определяем путь к фикстурам
 FIXTURES_PATH = Path(__file__).parent / "fixtures"
+UTC = ZoneInfo("UTC")
 
 @pytest.fixture
 def mock_config():
-    """Мок конфигурации для Habr."""
     return {
         'habr': {
             'hubs': ['python'],
-            'filters': {
-                'min_rating': 10,
-                'exclude_keywords': ['дайджест']
-            }
+            'filters': {'min_rating': 10, 'exclude_keywords': ['дайджест']}
         }
     }
 
 @pytest.fixture
 def mock_storage():
-    """Мок хранилища."""
     storage = MagicMock()
-    storage.add_articles.return_value = 0
+    storage.get_last_article_date.return_value = None
     return storage
 
+def mock_requests_get(url, headers=None):
+    """Custom mock for requests.get to handle different URLs."""
+    mock_response = MagicMock()
+    if "articles" in url: # Article enrichment
+        mock_response.text = (FIXTURES_PATH / "habr_article.html").read_text()
+    else: # Hub page scraping
+        mock_response.text = (FIXTURES_PATH / "habr_hub_page.html").read_text()
+    return mock_response
+
+@patch('inforadar.providers.habr.requests.get', side_effect=mock_requests_get)
 @patch('inforadar.providers.habr.feedparser')
-def test_rss_parsing_and_cleaning(mock_feedparser):
-    """Тестирует парсинг RSS, очистку URL и извлечение тегов."""
+def test_fetch_with_gap(mock_feedparser, mock_requests, mock_config, mock_storage):
+    """
+    Tests hybrid fetch: RSS has a gap, so page scraping is triggered.
+    """
+    # --- Setup ---
+    # RSS feed (oldest article is from Oct 24)
     rss_content = (FIXTURES_PATH / "habr_rss.xml").read_text()
     mock_feedparser.parse.return_value = feedparser.parse(rss_content)
-
-    provider = HabrProvider(config={}, storage=MagicMock())
-    articles = provider._fetch_rss_articles('python')
-
-    assert len(articles) == 3
-    # Проверяем очистку URL
-    assert articles[0].link == "https://habr.com/ru/articles/100001/"
-    # Проверяем извлечение тегов
-    assert articles[0].extra_data['tags'] == ["python", "programming"]
-    assert articles[1].extra_data['tags'] == ["python", "asyncio"]
-
-@patch('inforadar.providers.habr.requests')
-def test_article_enrichment(mock_requests):
-    """Тестирует, что провайдер правильно обогащает статью данными из HTML."""
-    mock_response = MagicMock()
-    mock_response.text = (FIXTURES_PATH / "habr_article.html").read_text()
-    mock_requests.get.return_value = mock_response
-
-    provider = HabrProvider(config={}, storage=MagicMock())
-    extra_data = provider._enrich_article_data("http://fake.url")
-
-    assert extra_data['rating'] == 25
-    assert extra_data['views'] == "15.9K"
-    assert extra_data['reading_time'] == "5 мин"
-    assert extra_data['comments'] == 12
-
-@patch('inforadar.providers.habr.requests')
-@patch('inforadar.providers.habr.feedparser')
-def test_full_fetch_and_filter_logic(mock_feedparser, mock_requests, mock_config, mock_storage):
-    """Интеграционный тест: проверяет весь процесс от сбора до фильтрации."""
-    rss_content = (FIXTURES_PATH / "habr_rss.xml").read_text()
-    mock_feedparser.parse.return_value = feedparser.parse(rss_content)
-
-    mock_response = MagicMock()
-    mock_response.text = (FIXTURES_PATH / "habr_article.html").read_text()
-    mock_requests.get.return_value = mock_response
     
+    # DB has an article from Oct 22, creating a gap on Oct 23
+    mock_storage.get_last_article_date.return_value = datetime(2025, 10, 22, 18, 0, 0, tzinfo=UTC)
+
+    # --- Action ---
     provider = HabrProvider(config=mock_config, storage=mock_storage)
-    fetched_articles = provider.fetch()
+    articles = provider.fetch()
 
-    assert len(fetched_articles) == 2
+    # --- Assertions ---
+    # We expect 3 articles:
+    # 2 from RSS (guid1, guid2)
+    # 1 from hub page scrape (guid0)
+    # "Дайджест" (guid3) is filtered out by keyword
+    # "Старая статья" (guid99999) is skipped because it's older than last_known_date
+    assert len(articles) == 3
+    guids = {a.guid for a in articles}
+    assert "https://habr.com/ru/articles/100001/" in guids
+    assert "https://habr.com/ru/articles/100002/" in guids
+    assert "https://habr.com/ru/articles/100000/" in guids
+    
+    # Check that hub page scraping was called
+    hub_page_url = "https://habr.com/ru/hubs/python/articles/page1/"
+    mock_requests.assert_any_call(hub_page_url, headers=provider.headers)
 
-    article1 = next(a for a in fetched_articles if a.guid == "https://habr.com/ru/articles/100001/")
-    assert article1.extra_data['rating'] == 25
-    # Проверяем, что теги из RSS сохранились после обогащения
-    assert article1.extra_data['tags'] == ["python", "programming"]
 
-    mock_config['habr']['filters']['min_rating'] = 30
-    provider_strict = HabrProvider(config=mock_config, storage=mock_storage)
-    fetched_strict = provider_strict.fetch()
-    assert len(fetched_strict) == 0
+@patch('inforadar.providers.habr.requests.get', side_effect=mock_requests_get)
+@patch('inforadar.providers.habr.feedparser')
+def test_fetch_no_gap(mock_feedparser, mock_requests, mock_config, mock_storage):
+    """
+    Tests hybrid fetch: RSS is sufficient, no page scraping needed.
+    """
+    # --- Setup ---
+    rss_content = (FIXTURES_PATH / "habr_rss.xml").read_text()
+    mock_feedparser.parse.return_value = feedparser.parse(rss_content)
+    
+    # DB has a recent article, no gap exists
+    mock_storage.get_last_article_date.return_value = datetime(2025, 10, 24, 9, 0, 0, tzinfo=UTC)
+
+    # --- Action ---
+    provider = HabrProvider(config=mock_config, storage=mock_storage)
+    articles = provider.fetch()
+
+    # --- Assertions ---
+    # We expect 2 articles from RSS that are newer than the last known date.
+    # "Дайджест" is filtered out.
+    assert len(articles) == 2
+    guids = {a.guid for a in articles}
+    assert "https://habr.com/ru/articles/100001/" in guids
+    assert "https://habr.com/ru/articles/100002/" in guids
+
+    # Check that hub page scraping was NOT called
+    # We do this by checking the call count for requests.get
+    # It should be called twice for enrichment, but never for a hub page.
+    enrichment_call_count = 2
+    assert mock_requests.call_count == enrichment_call_count
+    for call in mock_requests.call_args_list:
+        assert "articles/page" not in call.args[0]

@@ -1,7 +1,8 @@
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, func
 from sqlalchemy.orm import sessionmaker
 from typing import List, Optional
+from datetime import datetime
 
 from .models import Base, Article
 
@@ -74,3 +75,10 @@ class Storage:
             session.commit()
             return article
 
+    def get_last_article_date(self, hub: str) -> Optional[datetime]:
+        """Gets the most recent article's publication date for a specific hub."""
+        # This is a simplified version for the MVP. A real implementation
+        # would filter by hub, probably using a tag in the extra_data.
+        with self._Session() as session:
+            latest_date = session.query(func.max(Article.published_date)).scalar()
+            return latest_date

@@ -12,16 +12,21 @@ PIP = $(VENV_DIR)/bin/pip
 .DEFAULT_GOAL := help
 
 # Используем .PHONY для целей, которые не являются файлами
-.PHONY: help setup install test debug clean coverage
+.PHONY: help setup install test clean coverage debug-fetch debug-list debug-mark-read
 
 help:
 	@echo "Доступные команды:"
-	@echo "  make setup    - Создать виртуальное окружение и установить зависимости для разработки."
-	@echo "  make install  - Установить команду 'ir' глобально для текущего пользователя в WSL."
-	@echo "  make test     - Запустить тесты внутри виртуального окружения."
-	@echo "  make coverage - Запустить тесты и показать отчет о покрытии кода."
-	@echo "  make debug    - Запустить приложение из venv. Используйте ARGS='...' для передачи аргументов (например, make debug ARGS='list --interactive')"
-	@echo "  make clean    - Удалить временные файлы и виртуальное окружение."
+	@echo "  make setup          - Создать виртуальное окружение и установить зависимости для разработки."
+	@echo "  make install        - Установить команду 'ir' глобально для текущего пользователя в WSL."
+	@echo "  make test           - Запустить тесты внутри виртуального окружения."
+	@echo "  make coverage       - Запустить тесты и показать отчет о покрытии кода."
+	@echo ""
+	@echo "Debug-режим (запуск из venv для отладки):"
+	@echo "  make debug-fetch    - Запустить 'ir fetch' в режиме отладки."
+	@echo "  make debug-list     - Запустить 'ir list --interactive' в режиме отладки."
+	@echo "  make debug-mark-read - Запустить 'ir mark-read' в режиме отладки."
+	@echo ""
+	@echo "  make clean          - Удалить временные файлы и виртуальное окружение."
 
 # Цель для настройки окружения разработки
 setup: $(VENV_DIR)/touchfile
@@ -35,7 +40,7 @@ $(VENV_DIR)/touchfile: pyproject.toml
 	@echo ">>> Установка зависимостей в режиме редактирования..."
 	@# Устанавливаем сам пакет и зависимости для тестов
 	@$(PIP) install -e .
-	@$(PIP) install pytest pytest-mock
+	@$(PIP) install pytest pytest-mock pytest-bdd
 	@# Обновляем "флаг" успешной установки
 	@touch $(VENV_DIR)/touchfile
 
@@ -60,11 +65,18 @@ coverage: setup
 	@echo ">>> Отчет о покрытии:"
 	@$(VENV_DIR)/bin/coverage report -m --fail-under=70
 
-# Цель для запуска приложения в режиме отладки
-debug: setup
-	@echo ">>> Запуск приложения в режиме отладки..."
-	@# Мы можем передавать аргументы в make, которые будут переданы в скрипт
-	@$(VENV_DIR)/bin/ir $(ARGS)
+# Debug-режим: запуск команд из venv для отладки
+debug-fetch: setup
+	@echo ">>> [DEBUG] Запуск ir fetch из venv..."
+	@$(VENV_DIR)/bin/ir fetch
+
+debug-list: setup
+	@echo ">>> [DEBUG] Запуск ir list --interactive из venv..."
+	@$(VENV_DIR)/bin/ir list --interactive
+
+debug-mark-read: setup
+	@echo ">>> [DEBUG] Запуск ir mark-read из venv..."
+	@$(VENV_DIR)/bin/ir mark-read
 
 # Цель для очистки проекта
 clean:

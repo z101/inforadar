@@ -18,6 +18,7 @@ dependencies = [
     "requests",
     "beautifulsoup4",
     "feedparser",
+    "markdownify",
 ]
 
 # САМАЯ ВАЖНАЯ ЧАСТЬ ДЛЯ КОМАНДЫ `ir`

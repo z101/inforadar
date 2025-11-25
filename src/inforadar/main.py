@@ -7,7 +7,7 @@ from rich.text import Text
 from rich.progress import Progress, SpinnerColumn, TextColumn
 import webbrowser
 import os
-
+from typing import List
 from .core import CoreEngine
 from .models import Article
 
@@ -19,6 +19,15 @@ def fetch():
     """Fetches new articles from configured sources."""
     engine = CoreEngine()
     engine.run_fetch()
+
+@app.command()
+def refresh(
+    days: int = typer.Option(7, "--days", "-d", help="Refresh articles from last N days"),
+    unread_only: bool = typer.Option(True, "--unread-only", "-u", help="Refresh only unread articles")
+):
+    """Refreshes metadata (rating, comments, views) for existing articles."""
+    engine = CoreEngine()
+    engine.run_refresh(days=days, unread_only=unread_only)
 
 @app.command(name="list")
 def list_articles(

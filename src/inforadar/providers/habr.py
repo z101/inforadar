@@ -6,9 +6,10 @@ import requests
 import feedparser
 import calendar
 from bs4 import BeautifulSoup
+import markdownify
 from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from ..models import Article
 from ..storage import Storage
@@ -34,33 +35,59 @@ class HabrProvider:
             
             # Step 2: Check for a gap
             last_known_date = self.storage.get_last_article_date(hub)
+            if last_known_date:
+                last_known_date = last_known_date.replace(tzinfo=timezone.utc)
+            
+            # Use initial_fetch_date on first run if configured
+            cutoff_date = last_known_date
+            if last_known_date is None:
+                initial_date_str = self.config.get('initial_fetch_date')
+                if initial_date_str:
+                    try:
+                        cutoff_date = datetime.strptime(initial_date_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                    except (ValueError, TypeError):
+                        # Invalid date format, ignore and use None
+                        pass
+            
             oldest_rss_date = min(a.published_date for a in rss_articles_map.values()) if rss_articles_map else None
 
             scraped_articles_map = {}
-            if last_known_date and oldest_rss_date and oldest_rss_date > last_known_date:
+            if cutoff_date and oldest_rss_date and oldest_rss_date > cutoff_date:
                 # Step 3: Gap detected, start scraping hub pages
-                scraped_articles_map = self._scrape_hub_pages(hub, last_known_date)
+                scraped_articles_map = self._scrape_hub_pages(hub, cutoff_date)
 
             # Step 4: Combine and deduplicate
             combined_articles_map = {**scraped_articles_map, **rss_articles_map}
             
-            # Filter out articles older than the last known date
-            articles_to_process = [
-                article for article in combined_articles_map.values()
-                if not last_known_date or article.published_date > last_known_date
-            ]
+            # Determine which articles to process
+            # 1. New articles (newer than cutoff_date)
+            # 2. Recent articles (newer than auto-update threshold)
+            
+            auto_update_days = self.config.get('auto_update_within_days', 0)
+            update_threshold = None
+            if auto_update_days > 0:
+                update_threshold = datetime.now(timezone.utc) - timedelta(days=auto_update_days)
 
-            # Step 5: Enrich and filter
+            articles_to_process = []
+            for article in combined_articles_map.values():
+                is_new = not cutoff_date or article.published_date > cutoff_date
+                is_recent = update_threshold and article.published_date > update_threshold
+                
+                if is_new or is_recent:
+                    articles_to_process.append(article)
+
+            # Step 5: Enrich articles
+            # Step 5: Enrich articles
             for article in articles_to_process:
-                if self._is_filtered_by_keyword(article.title):
-                    continue
-
-                time.sleep(random.uniform(0.1, 0.5)) # Be nice
-                extra_data = self._enrich_article_data(article.link)
-                article.extra_data.update(extra_data)
-
-                if self._is_filtered_by_rating(extra_data.get('rating')):
-                    continue
+                time.sleep(random.uniform(0.1, 0.5)) # Be nice to the server
+                enrichment_data = self._enrich_article_data(article.link)
+                
+                # Update extra_data
+                article.extra_data.update(enrichment_data.get('extra_data', {}))
+                
+                # Update new model fields
+                article.content_md = enrichment_data.get('content_md')
+                article.comments_data = enrichment_data.get('comments_data', [])
                 
                 all_new_articles.append(article)
 
@@ -101,11 +128,17 @@ class HabrProvider:
                 page_is_getting_old = False
                 for article_el in soup.select("article.tm-articles-list__item"):
                     link_el = article_el.select_one("a.tm-title__link")
-                    time_el = article_el.select_one("span.tm-article-datetime-published > time")
+                    time_el = article_el.select_one(".tm-article-datetime-published time")
                     
                     if not link_el or not time_el: continue
 
-                    link = self._clean_url(f"https://habr.com{link_el['href']}")
+                    href = link_el['href']
+                    # Handle both relative and absolute URLs
+                    if href.startswith('http'):
+                        link = self._clean_url(href)
+                    else:
+                        link = self._clean_url(f"https://habr.com{href}")
+                    
                     guid = link
                     if not guid.endswith('/'):
                         guid += '/'
@@ -118,7 +151,7 @@ class HabrProvider:
                         continue # Skip articles older than or same as stop_date
 
                     scraped_articles[guid] = Article(
-                        guid=guid, link=link, title=title, published_date=pub_date
+                        guid=guid, link=link, title=title, published_date=pub_date, extra_data={}
                     )
                 
                 if page_is_getting_old:
@@ -133,23 +166,75 @@ class HabrProvider:
             if element: return element.text.strip()
         return None
 
+    def _get_article_content(self, soup: BeautifulSoup) -> Optional[str]:
+        """Extracts article content and converts it to Markdown."""
+        # Try new selector first, then old one
+        body = soup.select_one(".article-body") or soup.select_one(".tm-article-body")
+        if not body:
+            return None
+        
+        # Convert to Markdown
+        md = markdownify.markdownify(str(body), heading_style="ATX")
+        # Basic cleanup of excessive newlines
+        return "\n".join(line for line in md.splitlines() if line.strip())
+
+    def _get_article_comments(self, article_id: str) -> List[Dict[str, Any]]:
+        """Fetches comments using Habr's internal API."""
+        if not article_id:
+            return []
+            
+        url = f"https://habr.com/kek/v2/articles/{article_id}/comments"
+        try:
+            response = requests.get(url, headers=self.headers)
+            if response.status_code != 200:
+                return []
+            
+            data = response.json()
+            comments = []
+            for comment_id, comment_data in data.get('comments', {}).items():
+                if comment_data.get('delete'): continue
+                
+                comments.append({
+                    'id': comment_data.get('id'),
+                    'parent_id': comment_data.get('parentId'),
+                    'author': comment_data.get('author', {}).get('login'),
+                    'text': comment_data.get('message'),
+                    'score': comment_data.get('score'),
+                    'time': comment_data.get('timePublished')
+                })
+            return comments
+        except (requests.RequestException, ValueError):
+            return []
+
     def _enrich_article_data(self, url: str) -> Dict[str, Any]:
         try:
             response = requests.get(url, headers=self.headers)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            rating_text = self._find_text(soup, [".tm-votes-meter__value"])
-            comments_text = self._find_text(soup, [".tm-comments-link__comment-count"])
+            # Extract article ID from URL for comments API
+            # URL format: https://habr.com/ru/articles/123456/
+            path_parts = urlparse(url).path.strip('/').split('/')
+            article_id = path_parts[-1] if path_parts else None
 
-            return {
-                'rating': int(rating_text.replace('+', '')) if rating_text else None,
+            # Updated selectors for current Habr.com structure
+            rating_text = self._find_text(soup, [".tm-votes-lever__score-counter"])
+            comments_text = self._find_text(soup, [".article-comments-counter-link span.value"])
+
+            extra_data = {
+                'rating': int(rating_text.replace('+', '').replace('−', '-')) if rating_text else None,
                 'views': self._find_text(soup, [".tm-icon-counter__value"]),
                 'reading_time': self._find_text(soup, [".tm-article-reading-time__label"]),
                 'comments': int(comments_text) if comments_text else None
             }
+            
+            return {
+                'extra_data': extra_data,
+                'content_md': self._get_article_content(soup),
+                'comments_data': self._get_article_comments(article_id) if article_id else []
+            }
         except (AttributeError, ValueError, requests.RequestException):
-            return {}
+            return {'extra_data': {}, 'content_md': None, 'comments_data': []}
 
     def _is_filtered_by_keyword(self, title: str) -> bool:
         exclude_keywords = self.config.get('filters', {}).get('exclude_keywords', [])

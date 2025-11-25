@@ -1,33 +1,34 @@
-
 <!DOCTYPE html>
 <html>
+
 <body>
   <!-- Эта статья есть в RSS -->
-  <article>
+  <article class="tm-articles-list__item">
     <a href="https://habr.com/ru/articles/100002/" class="tm-title__link">
       <h3>Статья 2: Про asyncio</h3>
     </a>
-    <div class="tm-article-datetime-published">
+    <span class="tm-article-datetime-published">
       <time datetime="2025-10-24T11:00:00.000Z"></time>
-    </div>
+    </span>
   </article>
   <!-- Эта статья "в разрыве", ее нет в RSS, но она новее, чем last_known_date -->
-  <article>
+  <article class="tm-articles-list__item">
     <a href="https://habr.com/ru/articles/100000/" class="tm-title__link">
       <h3>Статья 0: Про CPython</h3>
     </a>
-    <div class="tm-article-datetime-published">
+    <span class="tm-article-datetime-published">
       <time datetime="2025-10-23T12:00:00.000Z"></time>
-    </div>
+    </span>
   </article>
   <!-- Эта статья уже должна быть в базе, скрапинг на ней остановится -->
-  <article>
+  <article class="tm-articles-list__item">
     <a href="https://habr.com/ru/articles/99999/" class="tm-title__link">
       <h3>Старая статья</h3>
     </a>
-    <div class="tm-article-datetime-published">
+    <span class="tm-article-datetime-published">
       <time datetime="2025-10-22T18:00:00.000Z"></time>
-    </div>
+    </span>
   </article>
 </body>
+
 </html>

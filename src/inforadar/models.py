@@ -17,6 +17,9 @@ class Article(Base):
     status_read = Column(Boolean, default=False, nullable=False)
     status_interesting = Column(Boolean, default=False, nullable=False)
     
+    content_md = Column(String, nullable=True)  # Normalized Markdown content
+    comments_data = Column(JSON, default=[], nullable=False)  # List of comments
+    
     extra_data = Column(JSON, default={}, nullable=False)
 
     def __repr__(self):

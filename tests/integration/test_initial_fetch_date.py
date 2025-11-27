@@ -37,7 +37,7 @@ def test_initial_fetch_date_filters_old_articles(mock_feedparser, mock_requests)
         }
     }
     
-    provider = HabrProvider(config=mock_config, storage=mock_storage)
+    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     articles = provider.fetch()
     
     # Should get 2 articles: Article 2 (11:00) and Digest (12:00)
@@ -67,7 +67,7 @@ def test_initial_fetch_date_not_used_on_subsequent_runs(mock_feedparser, mock_re
         }
     }
     
-    provider = HabrProvider(config=mock_config, storage=mock_storage)
+    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     articles = provider.fetch()
     
     # Should use last_known_date (10:30), not initial_fetch_date

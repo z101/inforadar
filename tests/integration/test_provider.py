@@ -54,7 +54,7 @@ def test_fetch_with_gap(mock_feedparser, mock_requests, mock_config, mock_storag
     mock_feedparser.parse.return_value = feedparser.parse(rss_content)
     mock_storage.get_last_article_date.return_value = datetime(2025, 10, 22, 18, 0, 0, tzinfo=UTC)
 
-    provider = HabrProvider(config=mock_config, storage=mock_storage)
+    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     articles = provider.fetch()
 
     # Without filtering, we get all 4 articles (including digest)
@@ -72,7 +72,7 @@ def test_fetch_no_gap(mock_feedparser, mock_requests, mock_config, mock_storage)
     mock_feedparser.parse.return_value = feedparser.parse(rss_content)
     mock_storage.get_last_article_date.return_value = datetime(2025, 10, 24, 10, 30, 0, tzinfo=UTC)
 
-    provider = HabrProvider(config=mock_config, storage=mock_storage)
+    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     articles = provider.fetch()
     
     # Without filtering, we get 2 articles (Article 2 and Digest)
@@ -85,7 +85,7 @@ def test_fetch_no_gap(mock_feedparser, mock_requests, mock_config, mock_storage)
 @patch('inforadar.providers.habr.requests.get')
 def test_provider_uses_user_agent(mock_get, mock_config, mock_storage):
     """Проверяет, что провайдер использует User-Agent (NFT1.1.1)."""
-    provider = HabrProvider(config=mock_config, storage=mock_storage)
+    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     mock_get.return_value.text = "<html></html>"
     # Вызываем внутренний метод, чтобы проверить один конкретный вызов
     provider._enrich_article_data("http://fake.url")
@@ -104,7 +104,7 @@ def test_content_and_comments_extraction(mock_feedparser, mock_requests, mock_co
     mock_feedparser.parse.return_value = feedparser.parse(rss_content)
     mock_storage.get_last_article_date.return_value = datetime(2025, 10, 24, 10, 30, 0, tzinfo=UTC)
 
-    provider = HabrProvider(config=mock_config, storage=mock_storage)
+    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     articles = provider.fetch()
     
     article = articles[0]

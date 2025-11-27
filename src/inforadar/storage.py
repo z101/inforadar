@@ -38,6 +38,9 @@ class Storage:
                     # Update existing article's metadata
                     existing_article = existing_map[article.guid]
                     existing_article.extra_data = article.extra_data
+                    # Ensure source is set if it was missing (migration)
+                    if not existing_article.source and article.source:
+                        existing_article.source = article.source
                     updated_count += 1
                 else:
                     # Add new article
@@ -47,18 +50,22 @@ class Storage:
             session.commit()
             return {'added': added_count, 'updated': updated_count}
 
-    def get_articles(self, read: bool, interesting: Optional[bool] = None) -> List[Article]:
+    def get_articles(self, read: bool, interesting: Optional[bool] = None, source: Optional[str] = None) -> List[Article]:
         """
         Gets articles from the database based on their status.
         
         :param read: The read status of the articles to fetch.
         :param interesting: If provided, filters by the interesting status.
+        :param source: If provided, filters by the source.
         """
         with self._Session() as session:
             query = session.query(Article).filter(Article.status_read == read)
             
             if interesting is not None:
                 query = query.filter(Article.status_interesting == interesting)
+            
+            if source:
+                query = query.filter(Article.source == source)
             
             return query.order_by(Article.published_date.desc()).all()
 

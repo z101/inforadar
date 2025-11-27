@@ -48,7 +48,7 @@ def test_auto_update_recent_articles(mock_feedparser, mock_requests):
         mock_datetime.fromisoformat = datetime.fromisoformat # Keep original method
         mock_datetime.fromtimestamp = datetime.fromtimestamp # Keep original method
         
-        provider = HabrProvider(config=mock_config, storage=mock_storage)
+        provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
         articles = provider.fetch()
         
         # Article 2 (2025-10-24) is older than last_known_date (2025-10-25)
@@ -86,7 +86,7 @@ def test_no_auto_update_old_articles(mock_feedparser, mock_requests):
         mock_datetime.fromisoformat = datetime.fromisoformat
         mock_datetime.fromtimestamp = datetime.fromtimestamp
         
-        provider = HabrProvider(config=mock_config, storage=mock_storage)
+        provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
         articles = provider.fetch()
         
         # Articles from 2025-10-24 are > 3 days old relative to 2025-11-01

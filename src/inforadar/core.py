@@ -6,6 +6,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 import time
 import random
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn, MofNCompleteColumn
 
 class CoreEngine:
     """Orchestrates the entire data fetching and storing process."""
@@ -15,25 +16,51 @@ class CoreEngine:
         self.storage = Storage() # Uses default DB path
         self.storage.init_db() # Ensure DB is created
 
-    def run_fetch(self):
-        """Runs the fetch process for all configured providers."""
-        # For now, we only have one provider
-        habr_provider = HabrProvider(config=self.config, storage=self.storage)
+    def run_fetch(self, source_name: Optional[str] = None):
+        """Runs the fetch process for configured sources."""
+        sources = self.config.get('sources', {})
         
-        print("Fetching articles from Habr...")
-        new_articles = habr_provider.fetch()
-        
-        if not new_articles:
-            print("No new articles found.")
-            return
+        # Filter sources if specific one requested
+        if source_name:
+            if source_name not in sources:
+                print(f"Source '{source_name}' not found in configuration.")
+                return
+            sources = {source_name: sources[source_name]}
 
-        print(f"Found {len(new_articles)} articles. Saving to database...")
-        result = self.storage.add_or_update_articles(new_articles)
-        print(f"Added {result['added']} new articles, updated {result['updated']} existing articles.")
+        total_added = 0
+        total_updated = 0
 
-    def get_articles(self, read: bool = False, interesting: Optional[bool] = None) -> List[Article]:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeRemainingColumn(),
+        ) as progress:
+            
+            for name, config in sources.items():
+                if config.get('type') == 'habr':
+                    provider = HabrProvider(name, config, self.storage)
+                    
+                    task_id = progress.add_task(f"Fetching {name}...", total=None)
+
+                    def update_progress(description: str, current: int, total: Optional[int]):
+                        progress.update(task_id, description=f"[{name}] {description}", completed=current, total=total)
+
+                    new_articles = provider.fetch(on_progress=update_progress)
+                    
+                    if new_articles:
+                        result = self.storage.add_or_update_articles(new_articles)
+                        total_added += result['added']
+                        total_updated += result['updated']
+                    
+                    progress.remove_task(task_id)
+
+        print(f"Fetch complete. Added {total_added} new, updated {total_updated} existing.")
+
+    def get_articles(self, read: bool = False, interesting: Optional[bool] = None, source: Optional[str] = None) -> List[Article]:
         """Retrieves articles from storage based on status."""
-        return self.storage.get_articles(read=read, interesting=interesting)
+        return self.storage.get_articles(read=read, interesting=interesting, source=source)
 
     def update_article_status(self, article_id: int, read: Optional[bool] = None, interesting: Optional[bool] = None):
         """Updates the status of an article in storage."""
@@ -53,13 +80,30 @@ class CoreEngine:
             return
         
         print(f"Refreshing metadata for {len(articles)} articles...")
-        habr_provider = HabrProvider(config=self.config, storage=self.storage)
         updated_count = 0
         
+        # Cache providers
+        providers = {}
+
         for i, article in enumerate(articles, 1):
             print(f"  [{i}/{len(articles)}] {article.title[:50]}...")
+            
+            if not article.source:
+                continue
+
+            if article.source not in providers:
+                source_config = self.config.get('sources', {}).get(article.source)
+                if source_config and source_config.get('type') == 'habr':
+                    providers[article.source] = HabrProvider(article.source, source_config, self.storage)
+                else:
+                    providers[article.source] = None
+            
+            provider = providers[article.source]
+            if not provider:
+                continue
+
             time.sleep(random.uniform(0.1, 0.5))  # Be nice to the server
-            extra_data = habr_provider._enrich_article_data(article.link)
+            extra_data = provider._enrich_article_data(article.link)
             if self.storage.update_article_metadata(article.id, extra_data):
                 updated_count += 1
         

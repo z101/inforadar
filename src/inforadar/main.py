@@ -14,6 +14,16 @@ from .models import Article
 app = typer.Typer()
 console = Console()
 
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context):
+    """
+    Inforadar - Information Radar.
+    Run without commands to start the interactive TUI.
+    """
+    if ctx.invoked_subcommand is None:
+        from .tui import InforadarApp
+        InforadarApp().run()
+
 @app.command()
 def fetch():
     """Fetches new articles from configured sources."""

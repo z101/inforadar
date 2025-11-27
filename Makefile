@@ -9,10 +9,10 @@ PYTHON = $(VENV_DIR)/bin/python
 PIP = $(VENV_DIR)/bin/pip
 
 # Цель по умолчанию, если просто вызвать 'make'
-.DEFAULT_GOAL := help
+.DEFAULT_GOAL := debug
 
 # Используем .PHONY для целей, которые не являются файлами
-.PHONY: help setup install test clean coverage debug-fetch debug-list debug-mark-read
+.PHONY: help setup install test clean coverage debug
 
 help:
 	@echo "Доступные команды:"
@@ -22,9 +22,7 @@ help:
 	@echo "  make coverage       - Запустить тесты и показать отчет о покрытии кода."
 	@echo ""
 	@echo "Debug-режим (запуск из venv для отладки):"
-	@echo "  make debug-fetch    - Запустить 'ir fetch' в режиме отладки."
-	@echo "  make debug-list     - Запустить 'ir list --interactive' в режиме отладки."
-	@echo "  make debug-mark-read - Запустить 'ir mark-read' в режиме отладки."
+	@echo "  make debug          - Запустить 'ir' (TUI) в режиме отладки (по умолчанию)."
 	@echo ""
 	@echo "  make clean          - Удалить временные файлы и виртуальное окружение."
 
@@ -65,18 +63,10 @@ coverage: setup
 	@echo ">>> Отчет о покрытии:"
 	@$(VENV_DIR)/bin/coverage report -m --fail-under=70
 
-# Debug-режим: запуск команд из venv для отладки
-debug-fetch: setup
-	@echo ">>> [DEBUG] Запуск ir fetch из venv..."
-	@$(VENV_DIR)/bin/ir fetch
-
-debug-list: setup
-	@echo ">>> [DEBUG] Запуск ir list --interactive из venv..."
-	@$(VENV_DIR)/bin/ir list --interactive
-
-debug-mark-read: setup
-	@echo ">>> [DEBUG] Запуск ir mark-read из venv..."
-	@$(VENV_DIR)/bin/ir mark-read
+# Debug-режим: запуск приложения из venv
+debug: setup
+	@echo ">>> [DEBUG] Запуск Inforadar (TUI)..."
+	@$(VENV_DIR)/bin/ir
 
 # Цель для очистки проекта
 clean:

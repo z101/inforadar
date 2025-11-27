@@ -17,19 +17,27 @@ from ..storage import Storage
 class HabrProvider:
     """Provider for fetching and enriching articles from Habr.com."""
 
-    def __init__(self, config: Dict[str, Any], storage: Storage):
-        self.config = config.get('habr', {})
+    def __init__(self, source_name: str, config: Dict[str, Any], storage: Storage):
+        self.source_name = source_name
+        self.config = config
         self.storage = storage
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
         }
 
-    def fetch(self) -> List[Article]:
-        """Fetches, enriches, and filters articles using the hybrid strategy."""
+    def fetch(self, on_progress: Optional[Any] = None) -> List[Article]:
+        """
+        Fetches, enriches, and filters articles using the hybrid strategy.
+        
+        :param on_progress: Optional callback function(description: str, current: int, total: Optional[int])
+        """
         all_new_articles = []
         hubs = self.config.get('hubs', [])
         
         for hub in hubs:
+            if on_progress:
+                on_progress(f"Scanning RSS for hub '{hub}'...", 0, None)
+
             # Step 1: Get articles from RSS
             rss_articles_map = {a.guid: a for a in self._fetch_rss_articles(hub)}
             
@@ -53,6 +61,8 @@ class HabrProvider:
 
             scraped_articles_map = {}
             if cutoff_date and oldest_rss_date and oldest_rss_date > cutoff_date:
+                if on_progress:
+                    on_progress(f"Gap detected in '{hub}', scraping pages...", 0, None)
                 # Step 3: Gap detected, start scraping hub pages
                 scraped_articles_map = self._scrape_hub_pages(hub, cutoff_date)
 
@@ -77,8 +87,11 @@ class HabrProvider:
                     articles_to_process.append(article)
 
             # Step 5: Enrich articles
-            # Step 5: Enrich articles
-            for article in articles_to_process:
+            total_articles = len(articles_to_process)
+            for i, article in enumerate(articles_to_process, 1):
+                if on_progress:
+                    on_progress(f"Enriching: {article.title[:40]}...", i, total_articles)
+
                 time.sleep(random.uniform(0.1, 0.5)) # Be nice to the server
                 enrichment_data = self._enrich_article_data(article.link)
                 
@@ -110,6 +123,7 @@ class HabrProvider:
                 link=self._clean_url(entry.link),
                 title=entry.title,
                 published_date=published_dt,
+                source=self.source_name,
                 extra_data={'tags': tags}
             )
             articles.append(article)
@@ -151,7 +165,7 @@ class HabrProvider:
                         continue # Skip articles older than or same as stop_date
 
                     scraped_articles[guid] = Article(
-                        guid=guid, link=link, title=title, published_date=pub_date, extra_data={}
+                        guid=guid, link=link, title=title, published_date=pub_date, source=self.source_name, extra_data={}
                     )
                 
                 if page_is_getting_old:

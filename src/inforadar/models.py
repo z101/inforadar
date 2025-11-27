@@ -13,6 +13,7 @@ class Article(Base):
     link = Column(String, nullable=False)
     title = Column(String, nullable=False)
     published_date = Column(DateTime, nullable=False)
+    source = Column(String, nullable=True)
     
     status_read = Column(Boolean, default=False, nullable=False)
     status_interesting = Column(Boolean, default=False, nullable=False)

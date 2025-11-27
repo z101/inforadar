@@ -21,7 +21,7 @@ def test_config_loader_file_not_found():
 
 def test_habr_url_cleaner():
     """Проверяет, что из URL удаляются UTM-метки."""
-    provider = HabrProvider(config={}, storage=MagicMock())
+    provider = HabrProvider(source_name='habr', config={}, storage=MagicMock())
     dirty_url = "https://habr.com/ru/articles/123/?utm_source=habrahabr"
     clean_url = "https://habr.com/ru/articles/123/"
     assert provider._clean_url(dirty_url) == clean_url
@@ -30,7 +30,7 @@ def test_habr_url_cleaner():
 def test_provider_handles_network_error(mock_get):
     """Проверяет, что скрапер не падает при ошибке сети (NFT1.1.3)."""
     mock_get.side_effect = requests.exceptions.RequestException("Connection error")
-    provider = HabrProvider(config={}, storage=MagicMock())
+    provider = HabrProvider(source_name='habr', config={}, storage=MagicMock())
     # Ожидаем пустой словарь с дефолтными полями, а не падение
     extra_data = provider._enrich_article_data("http://fake.url")
     assert extra_data == {'extra_data': {}, 'content_md': None, 'comments_data': []}

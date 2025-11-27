@@ -45,7 +45,7 @@ def mock_hub_page(mock_requests_get):
 
 @when('Пользователь запускает сбор данных', target_fixture="collected_articles")
 def run_data_collection(mock_storage, mock_config):
-    provider = HabrProvider(config=mock_config, storage=mock_storage)
+    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     return provider.fetch()
 
 @then(parsers.parse('Должно быть собрано {count:d} новые статьи'))

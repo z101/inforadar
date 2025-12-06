@@ -50,16 +50,19 @@ class Storage:
             session.commit()
             return {'added': added_count, 'updated': updated_count}
 
-    def get_articles(self, read: bool, interesting: Optional[bool] = None, source: Optional[str] = None) -> List[Article]:
+    def get_articles(self, read: Optional[bool] = None, interesting: Optional[bool] = None, source: Optional[str] = None) -> List[Article]:
         """
         Gets articles from the database based on their status.
         
-        :param read: The read status of the articles to fetch.
+        :param read: The read status of the articles to fetch. If None, fetches all.
         :param interesting: If provided, filters by the interesting status.
         :param source: If provided, filters by the source.
         """
         with self._Session() as session:
-            query = session.query(Article).filter(Article.status_read == read)
+            query = session.query(Article)
+            
+            if read is not None:
+                query = query.filter(Article.status_read == read)
             
             if interesting is not None:
                 query = query.filter(Article.status_interesting == interesting)
@@ -127,3 +130,13 @@ class Storage:
             article.extra_data = extra_data
             session.commit()
             return True
+
+    def get_article_count_by_source(self, source_name: str) -> int:
+        """Gets the total number of articles for a specific source."""
+        with self._Session() as session:
+            return session.query(func.count(Article.id)).filter(Article.source == source_name).scalar() or 0
+
+    def get_latest_article_date_by_source(self, source_name: str) -> Optional[datetime]:
+        """Gets the most recent article's publication date for a specific source."""
+        with self._Session() as session:
+            return session.query(func.max(Article.published_date)).filter(Article.source == source_name).scalar()

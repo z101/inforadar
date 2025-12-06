@@ -2,7 +2,7 @@ from .storage import Storage
 from .config import load_config
 from .providers.habr import HabrProvider
 from .models import Article
-from typing import List, Optional
+from typing import List, Optional, Callable
 from datetime import datetime, timedelta, timezone
 import time
 import random
@@ -16,8 +16,8 @@ class CoreEngine:
         self.storage = Storage() # Uses default DB path
         self.storage.init_db() # Ensure DB is created
 
-    def run_fetch(self, source_name: Optional[str] = None):
-        """Runs the fetch process for configured sources."""
+    def run_sync(self, source_name: Optional[str] = None, progress: Optional[Progress] = None, log_callback: Optional[Callable[[str], None]] = None):
+        """Runs the sync process for configured sources."""
         sources = self.config.get('sources', {})
         
         # Filter sources if specific one requested
@@ -30,22 +30,31 @@ class CoreEngine:
         total_added = 0
         total_updated = 0
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeRemainingColumn(),
-        ) as progress:
+        from contextlib import nullcontext
+        
+        if progress is None:
+            progress_ctx = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeRemainingColumn(),
+            )
+        else:
+            progress_ctx = nullcontext(progress)
+
+        with progress_ctx as p:
             
             for name, config in sources.items():
                 if config.get('type') == 'habr':
                     provider = HabrProvider(name, config, self.storage)
                     
-                    task_id = progress.add_task(f"Fetching {name}...", total=None)
+                    task_id = p.add_task(f"Syncing {name}...", total=None)
 
                     def update_progress(description: str, current: int, total: Optional[int]):
-                        progress.update(task_id, description=f"[{name}] {description}", completed=current, total=total)
+                        p.update(task_id, description=f"[{name}] {description}", completed=current, total=total)
+                        if log_callback:
+                            log_callback(f"[{name}] {description}")
 
                     new_articles = provider.fetch(on_progress=update_progress)
                     
@@ -54,11 +63,32 @@ class CoreEngine:
                         total_added += result['added']
                         total_updated += result['updated']
                     
-                    progress.remove_task(task_id)
+                    p.remove_task(task_id)
 
-        print(f"Fetch complete. Added {total_added} new, updated {total_updated} existing.")
+        if progress is None:
+            # Only print summary if we own the progress bar (CLI mode)
+            print(f"Sync complete. Added {total_added} new, updated {total_updated} existing.")
 
-    def get_articles(self, read: bool = False, interesting: Optional[bool] = None, source: Optional[str] = None) -> List[Article]:
+    def get_sources_summary(self) -> List[dict]:
+        """Gets a summary for each configured source (article count and last sync date)."""
+        sources_summary = []
+        sources_config = self.config.get('sources', {})
+        for name in sources_config:
+            count = self.storage.get_article_count_by_source(name)
+            latest_date = self.storage.get_latest_article_date_by_source(name)
+            # Calculate topics count from config
+            source_config = sources_config.get(name, {})
+            topics_count = len(source_config.get('hubs', []))
+            
+            sources_summary.append({
+                "name": name,
+                "articles_count": count,
+                "topics_count": topics_count,
+                "last_sync_date": latest_date
+            })
+        return sources_summary
+
+    def get_articles(self, read: Optional[bool] = None, interesting: Optional[bool] = None, source: Optional[str] = None) -> List[Article]:
         """Retrieves articles from storage based on status."""
         return self.storage.get_articles(read=read, interesting=interesting, source=source)
 

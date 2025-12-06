@@ -72,6 +72,6 @@ debug: setup
 clean:
 	@echo ">>> Очистка проекта..."
 	@rm -rf $(VENV_DIR)
-	@rm -rf .pytest_cache .mypy_cache htmlcov .coverage
+	@rm -rf .pytest_cache .mypy_cache htmlcov .coverage inforadar.db
 	@find . -type d -name "__pycache__" -exec rm -rf {} +
 	@find . -type d -name "*.egg-info" -exec rm -rf {} +

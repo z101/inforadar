@@ -21,14 +21,14 @@ def main(ctx: typer.Context):
     Run without commands to start the interactive TUI.
     """
     if ctx.invoked_subcommand is None:
-        from .tui import InforadarApp
-        InforadarApp().run()
+        from .tui import AppState
+        AppState().run()
 
 @app.command()
-def fetch():
-    """Fetches new articles from configured sources."""
+def sync():
+    """Syncs new articles from configured sources."""
     engine = CoreEngine()
-    engine.run_fetch()
+    engine.run_sync()
 
 @app.command()
 def refresh(

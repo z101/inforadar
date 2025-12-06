@@ -252,14 +252,18 @@ class BaseScreen:
     def render(self):
         pass
 
-    def handle_input(self, key: str):
+    def handle_input(self, key: str) -> bool:
         if key == Key.QUESTION:
             self.app.push_screen(HelpScreen(self.app))
+            return True
         elif key == Key.Q and len(self.app.screen_stack) == 1:
             self.app.running = False
+            return True
         elif key == Key.ESCAPE:
             if len(self.app.screen_stack) > 1:
                 self.app.pop_screen()
+                return True
+        return False
 
 class ViewScreen(BaseScreen):
     """
@@ -400,8 +404,10 @@ class ViewScreen(BaseScreen):
                 return True
         
         # Clear buffer on any other navigation key
+        buffer_cleared = False
         if self.input_buffer:
             self.input_buffer = ""
+            buffer_cleared = True
             
         if key == Key.UP or key == Key.J: # Previous Block (J = Backward)
             if self.start_index > 0:
@@ -451,6 +457,9 @@ class ViewScreen(BaseScreen):
             if super().handle_input(key):
                 return True
                 
+        if buffer_cleared:
+            return True
+            
         # Reset pending_g if any other key was processed
         if key != Key.G:
             self.pending_g = False
@@ -543,11 +552,12 @@ class ActionScreen(BaseScreen):
         super().__init__(app)
         self.parent_screen = parent_screen
 
-    def handle_input(self, key: str):
+    def handle_input(self, key: str) -> bool:
         if key == Key.ESCAPE:
             self.app.pop_screen()
+            return True
         else:
-            super().handle_input(key)
+            return super().handle_input(key)
 
 class FilterActionScreen(ActionScreen):
     def __init__(self, app: AppState, parent_screen: ViewScreen):
@@ -566,17 +576,22 @@ class FilterActionScreen(ActionScreen):
         console.print(panel)
         console.print("\n[Enter] Apply  [Esc] Cancel", style="dim")
 
-    def handle_input(self, key: str):
+    def handle_input(self, key: str) -> bool:
         if key == Key.ENTER:
             self.parent_screen.filter_text = self.input_text
             self.parent_screen.apply_filter_and_sort()
             self.app.pop_screen()
+            return True
         elif key == Key.BACKSPACE:
             self.input_text = self.input_text[:-1]
+            return True
         elif key == Key.ESCAPE:
             self.app.pop_screen()
+            return True
         elif len(key) == 1 and key.isprintable():
             self.input_text += key
+            return True
+        return False
 
 class SortActionScreen(ActionScreen):
     def __init__(self, app: AppState, parent_screen: ViewScreen):
@@ -604,19 +619,22 @@ class SortActionScreen(ActionScreen):
         console.print(panel)
         console.print("\n[Enter] Select  [Esc] Cancel", style="dim")
 
-    def handle_input(self, key: str):
+    def handle_input(self, key: str) -> bool:
         if key == Key.UP or key == Key.K:
             self.selected = max(0, self.selected - 1)
+            return True
         elif key == Key.DOWN or key == Key.J:
             self.selected = min(len(self.options) - 1, self.selected + 1)
+            return True
         elif key == Key.ENTER:
             _, sort_key, reverse = self.options[self.selected]
             self.parent_screen.sort_key = sort_key
             self.parent_screen.sort_reverse = reverse
             self.parent_screen.apply_filter_and_sort()
             self.app.pop_screen()
+            return True
         else:
-            super().handle_input(key)
+            return super().handle_input(key)
 
 class SyncActionScreen(ActionScreen):
     def __init__(self, app: AppState, parent_screen: ViewScreen):
@@ -733,17 +751,21 @@ class ArticleDetailScreen(BaseScreen):
             self.article.status_read = True
             self.app.engine.update_article_status(self.article.id, read=True)
 
-    def handle_input(self, key: str):
+    def handle_input(self, key: str) -> bool:
         if key == Key.UP or key == Key.K:
             self.scroll_offset = max(0, self.scroll_offset - 1)
+            return True
         elif key == Key.DOWN or key == Key.J:
             self.scroll_offset = min(self.total_lines - self.visible_height, self.scroll_offset + 1)
+            return True
         elif key == Key.CTRL_D:
             self.scroll_offset = min(self.total_lines - self.visible_height, self.scroll_offset + self.visible_height)
+            return True
         elif key == Key.CTRL_U:
             self.scroll_offset = max(0, self.scroll_offset - self.visible_height)
+            return True
         else:
-            super().handle_input(key)
+            return super().handle_input(key)
 
 class HelpScreen(BaseScreen):
     def __init__(self, app: AppState):
@@ -782,11 +804,12 @@ class HelpScreen(BaseScreen):
         
         console.print("Press [bold]Esc[/bold] to close help", style="dim", justify="center")
 
-    def handle_input(self, key: str):
+    def handle_input(self, key: str) -> bool:
         if key == Key.ESCAPE:
             self.app.pop_screen()
+            return True
         else:
-            super().handle_input(key)
+            return super().handle_input(key)
 
 if __name__ == "__main__":
     app = AppState()

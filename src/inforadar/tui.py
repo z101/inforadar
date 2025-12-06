@@ -1,7 +1,12 @@
 import sys
+import os
 import click
 import math
 import textwrap
+import signal
+import select
+import tty
+import termios
 from typing import List, Optional, Any, Dict, Callable, Tuple
 from datetime import datetime
 from rich.console import Console
@@ -55,21 +60,72 @@ LAYOUT_MAP = {
     'Я': 'Z', 'Ч': 'X', 'С': 'C', 'М': 'V', 'И': 'B', 'Т': 'N', 'Ь': 'M',
 }
 
+# Resize handling
+class ResizeScreen(Exception):
+    pass
+
+resize_needed = False
+
+def handle_winch(signum, frame):
+    global resize_needed
+    resize_needed = True
+
 def get_key() -> str:
     """Reads a key press and decodes escape sequences."""
-    ch = click.getchar()
-    
-    # Handle CTRL+D (EOT) and CTRL+U (NAK)
-    if ch == '\x04': return Key.CTRL_D
-    if ch == '\x15': return Key.CTRL_U
-    
-    if ch == '\x1b':
-        # Potential escape sequence
-        import select
-        import os
+    global resize_needed
+
+    fd = sys.stdin.fileno()
+    while True:
+        if resize_needed:
+            resize_needed = False
+            raise ResizeScreen()
+            
+        try:
+            # Wait for input with timeout to check resize flag
+            # Also select should be interrupted by signal (EINTR)
+            r, _, _ = select.select([fd], [], [], 0.1)
+            if r:
+                break
+        except (OSError, InterruptedError):
+            pass
+            
+    # Read first byte
+    try:
+        b1 = os.read(fd, 1)
+    except OSError:
+        return Key.UNKNOWN
+
+    ch = ""
+    # Decode UTF-8
+    if b1:
+        byte1 = ord(b1)
+        # Determine sequence length
+        seq_len = 1
+        if (byte1 & 0x80) == 0:
+            seq_len = 1
+        elif (byte1 & 0xE0) == 0xC0:
+            seq_len = 2
+        elif (byte1 & 0xF0) == 0xE0:
+            seq_len = 3
+        elif (byte1 & 0xF8) == 0xF0:
+            seq_len = 4
         
-        fd = sys.stdin.fileno()
-        # Check if there is input available on stdin
+        # Read remaining bytes if any
+        raw_bytes = b1
+        if seq_len > 1:
+            try:
+                raw_bytes += os.read(fd, seq_len - 1)
+            except OSError:
+                pass
+        
+        try:
+            ch = raw_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            ch = Key.UNKNOWN
+    
+    # Handle Escape Sequences (if it was just ESC)
+    if ch == '\x1b':
+        # Potential escape sequence - check for more data
         if fd in select.select([fd], [], [], 0.01)[0]:
             try:
                 ch2 = os.read(fd, 1).decode()
@@ -99,6 +155,10 @@ def get_key() -> str:
                     if ch3 == 'C': return Key.RIGHT
                     if ch3 == 'D': return Key.LEFT
         return Key.ESCAPE
+
+    # Handle CTRL+D (EOT) and CTRL+U (NAK)
+    if ch == '\x04': return Key.CTRL_D
+    if ch == '\x15': return Key.CTRL_U
 
     # Convert from other keyboard layouts to English
     if ch in LAYOUT_MAP:
@@ -151,18 +211,39 @@ class AppState:
         # Initial screen: ArticlesViewScreen
         self.push_screen(ArticlesViewScreen(self))
 
-        with self.console.screen():
-            self.console.show_cursor(False)
-            should_render = True
-            while self.running and self.current_screen:
-                if should_render:
-                    self.console.clear()
-                    self.current_screen.render()
-                    should_render = False
-                
-                key = get_key()
-                if self.current_screen:
-                    should_render = self.current_screen.handle_input(key)
+        # Register resize handler
+        old_handler = signal.signal(signal.SIGWINCH, handle_winch)
+        
+        # Save terminal settings
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+
+        try:
+            tty.setcbreak(fd)
+            with self.console.screen():
+                self.console.show_cursor(False)
+                should_render = True
+                while self.running and self.current_screen:
+                    if should_render:
+                        self.console.clear()
+                        self.current_screen.render()
+                        should_render = False
+                    
+                    try:
+                        key = get_key()
+                        if self.current_screen:
+                            should_render = self.current_screen.handle_input(key)
+                    except ResizeScreen:
+                        should_render = True
+                        # Update console size explicitly if needed (rich usually handles it)
+                        size = self.console.size
+        except KeyboardInterrupt:
+            pass # Handle Ctrl+C gracefully
+        finally:
+            # Restore terminal settings
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            # Restore signal handler
+            signal.signal(signal.SIGWINCH, old_handler)
 
 class BaseScreen:
     def __init__(self, app: AppState):

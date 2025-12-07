@@ -2,13 +2,16 @@ sources:
   habr:
     type: habr
     hubs:
-      - artificial_intelligence
-      - circuit-design
+      - id: artificial_intelligence
+        slug: ИИ
+      - id: circuit-design
+        slug: Схем-ка
     rss_template: "https://habr.com/ru/rss/hubs/{hub_slug}/articles/?limit=100"
     initial_fetch_date: "2025-11-16 00:00:00"
     auto_update_within_days: 3
     display:
       article_meta:
-        - { field: "extra_data", key: "rating", icon: "★" }
-        - { field: "extra_data", key: "views_count", icon: "👁" }
-        - { field: "comments_data", key: "count", icon: "💬" }
+        - rating
+        - views
+        - comments
+        - bookmarks

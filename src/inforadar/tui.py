@@ -46,6 +46,7 @@ class Key:
     CTRL_D = 'ctrl_d'
     CTRL_U = 'ctrl_u'
     UNKNOWN = 'unknown'
+    D = 'd'
 
 # Keyboard layout mapping: other layouts -> English
 LAYOUT_MAP = {
@@ -344,7 +345,7 @@ class ViewScreen(BaseScreen):
         self.current_page_items = self.calculate_visible_range(self.start_index, available_rows, width)
         
         # Table with no_wrap to ensure fixed row height
-        table = Table(box=box.SIMPLE, expand=True, show_footer=False, padding=(0, 1), header_style="bold")
+        table = Table(box=box.SIMPLE_HEAD, padding=0, expand=True, show_footer=False, header_style="bold dim")
         columns = self.get_columns(width)
         for col in columns:
             table.add_column(**col)
@@ -357,7 +358,10 @@ class ViewScreen(BaseScreen):
             # Highlight if input buffer matches row number
             style = row_style
             if self.input_buffer and self.input_buffer == str(row_num):
-                style = "reverse green" # Green background for selected
+                style = "reverse green"
+                # Exclude first column from highlighting (reset style to ignore row style)
+                # if row_data:
+                #     row_data[0] = f"[reset]{row_data[0]}[/reset]"
                 
             table.add_row(*row_data, style=style)
         
@@ -473,74 +477,147 @@ class ArticlesViewScreen(ViewScreen):
         # Default sort: Date descending
         self.sort_key = lambda a: a.published_date
         self.sort_reverse = True
+        self.show_details = True
         self.apply_filter_and_sort()
+        
+        # Build hub slug map from config
+        self.hub_map = {}
+        sources = self.app.engine.config.get('sources', {})
+        for source_cfg in sources.values():
+            hubs = source_cfg.get('hubs', [])
+            for hub in hubs:
+                if isinstance(hub, dict) and 'id' in hub and 'slug' in hub:
+                    self.hub_map[hub['id']] = hub['slug']
+
+    def handle_input(self, key: str) -> bool:
+        if key == Key.D:
+            self.show_details = not self.show_details
+            return True
+        return super().handle_input(key)
 
     def refresh_data(self):
         # Fetch ALL articles
         self.items = self.app.engine.get_articles(read=None)
         self.apply_filter_and_sort()
 
+    def _format_compact(self, val: Any) -> str:
+        """
+        Formats numbers to compact string (e.g. '1.2k').
+        """
+        s_val = ""
+        if val is None:
+             s_val = "-"
+        elif isinstance(val, (int, float)) or (isinstance(val, str) and val.replace('.','',1).isdigit()):
+            try:
+                n = float(val)
+                if n == 0:
+                    s_val = "-"
+                elif n < 1000:
+                    s_val = f"{int(n)}"
+                elif n < 1000000:
+                    k = n / 1000
+                    if k < 10:
+                        s_val = f"{k:.1f}k".replace('.0k', 'k')
+                    else:
+                        s_val = f"{int(k)}k"
+                else:
+                    m = n / 1000000
+                    if m < 10:
+                        s_val = f"{m:.1f}M".replace('.0M', 'M')
+                    else:
+                        s_val = f"{int(m)}M"
+            except ValueError:
+                s_val = str(val)
+        else:
+             s_val = str(val)
+             
+        return s_val
+
     def render_row(self, item: Article, index: int) -> Tuple[List[str], str]:
-        # Columns: Source, Topic, #, Article, Date, Details
+        # Columns: #, Article, Source, Topic, Date, R, V, C, B
         
-        idx_str = str(index) # This is the row number on the page (passed from render)
-        source = item.source or "?"
-        topic = ""
-        if item.extra_data and 'tags' in item.extra_data and item.extra_data['tags']:
-            topic = item.extra_data['tags'][0]
-        
+        idx_str = f"[green dim]{index}[/green dim]"
         title = item.title
-        date_str = item.published_date.strftime("%Y-%m-%d")
         
-        # Details: Rating, Views, Comments
-        rating = item.extra_data.get('rating', '')
-        views = item.extra_data.get('views', '')
-        comments = item.extra_data.get('comments', '')
-        details = f"R:{rating} V:{views} C:{comments}"
+        row = [idx_str, title]
         
-        width = self.app.console.size[0]
-        cols = self.get_columns(width)
-        col_headers = [c['header'] for c in cols]
-        
-        row = []
-        if "Source" in col_headers: row.append(source)
-        if "Topic" in col_headers: row.append(topic)
-        if "#" in col_headers: row.append(idx_str)
-        if "Article" in col_headers: row.append(title)
-        if "Date" in col_headers: row.append(date_str)
-        if "Details" in col_headers: row.append(details)
-        
+        if self.show_details:
+            source = f"[dim]{item.source or '?'}[/dim]"
+            
+            # Topic resolution
+            topic_raw = ""
+            if item.extra_data.get('hub_id') in self.hub_map:
+                topic_raw = self.hub_map[item.extra_data['hub_id']]
+            elif item.extra_data and 'tags' in item.extra_data and item.extra_data['tags']:
+                topic_raw = item.extra_data['tags'][0]
+            
+            topic = f"[dim]{topic_raw}[/dim]"
+            
+            d = item.published_date
+            date_str = f"[dim]{d.day}-{d.strftime('%b')}-{d.strftime('%y')}[/dim]"
+            
+            # Details: Split into R, V, C, B
+            
+            # 1. Rating
+            r_val = item.extra_data.get('rating', 0) or 0
+            if isinstance(r_val, str) and not r_val.replace('-','').isdigit(): r_val = 0
+            r_val = int(r_val)
+            
+            r_str = str(r_val)
+            if r_val > 0:
+                r_cell = f"[bold green]{r_str}[/bold green]"
+            elif r_val < 0:
+                r_cell = f"[bold red]{r_str}[/bold red]"
+            else:
+                r_cell = f"[dim]-[/dim]" # Default to dash if 0
+                
+            # Helper for other metrics
+            def fmt_metric(key, icon, fallback='-'):
+                val = item.extra_data.get(key)
+                # Special handling for comments count
+                if key == 'comments':
+                    if val is None and item.comments_data:
+                         val = len(item.comments_data)
+                    elif val is None:
+                         val = 0
+                
+                # Bookmarks fallback
+                if key == 'bookmarks' and val is None:
+                     val = fallback
+
+                if val is None: val = fallback
+                
+                s_v = self._format_compact(val)
+                return f"[dim]{icon} {s_v}[/dim]"
+
+            v_cell = fmt_metric('views', '👁')
+            c_cell = fmt_metric('comments', '💬', '0')
+            b_cell = fmt_metric('bookmarks', '🔖', '-')
+            
+            row.extend([source, topic, date_str, r_cell, v_cell, c_cell, b_cell])
+            
         style = ""
-        # if not item.status_read:
-        #    style = "bold"
             
         return row, style
 
     def get_columns(self, width: int) -> List[Dict[str, Any]]:
-        # Min: Source, #, Article, Date
-        # Full: Source, Topic, #, Article, Date, Details
+        # Order: #, Article, Source, Topic, Date, Details
         
-        # Source: 10
-        # Topic: 15
-        # #: 4
-        # Article: remaining space (with ellipsis for overflow)
-        # Date: 10
-        # Details: 20
-        
-        cols = [
-            {"header": "Source", "width": 10, "no_wrap": True},
-        ]
-        
-        if width > 100:
-            cols.append({"header": "Topic", "width": 15, "no_wrap": True})
-            
-        cols.append({"header": "#", "width": 4, "justify": "right", "no_wrap": True})
-        cols.append({"header": "Article", "ratio": 1, "no_wrap": True, "overflow": "ellipsis"}) # Takes remaining space
-        cols.append({"header": "Date", "width": 10, "justify": "center", "no_wrap": True})
-        
-        if width > 120:
-            cols.append({"header": "Details", "width": 20, "no_wrap": True})
-            
+        cols = []
+        cols.append({"header": "#", "justify": "right", "no_wrap": True})
+        cols.append({"header": "Article", "ratio": 1, "no_wrap": True, "overflow": "ellipsis"})
+
+        if self.show_details:
+             cols.append({"header": "Source", "justify": "left", "no_wrap": True})
+             cols.append({"header": "Topic", "justify": "left", "no_wrap": True})
+             cols.append({"header": "Date", "justify": "center", "no_wrap": True})
+             
+             # Metric columns
+             cols.append({"header": "⭐", "justify": "right", "no_wrap": True})
+             cols.append({"header": "👁", "justify": "left", "no_wrap": True})
+             cols.append({"header": "💬", "justify": "left", "no_wrap": True})
+             cols.append({"header": "🔖", "justify": "left", "no_wrap": True})
+             
         return cols
 
     def on_select(self, item: Article):

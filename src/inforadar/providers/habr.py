@@ -34,15 +34,24 @@ class HabrProvider:
         all_new_articles = []
         hubs = self.config.get('hubs', [])
         
-        for hub in hubs:
+        for hub_entry in hubs:
+            # Handle both string and dict config
+            if isinstance(hub_entry, dict):
+                hub_id = hub_entry.get('id')
+                # Config might have other fields like 'slug' which we ignore here
+            else:
+                hub_id = hub_entry
+
+            if not hub_id: continue
+
             if on_progress:
-                on_progress(f"Scanning RSS for hub '{hub}'...", 0, None)
+                on_progress(f"Scanning RSS for hub '{hub_id}'...", 0, None)
 
             # Step 1: Get articles from RSS
-            rss_articles_map = {a.guid: a for a in self._fetch_rss_articles(hub)}
+            rss_articles_map = {a.guid: a for a in self._fetch_rss_articles(hub_id)}
             
             # Step 2: Check for a gap
-            last_known_date = self.storage.get_last_article_date(hub)
+            last_known_date = self.storage.get_last_article_date(hub_id)
             if last_known_date:
                 last_known_date = last_known_date.replace(tzinfo=timezone.utc)
             
@@ -62,9 +71,9 @@ class HabrProvider:
             scraped_articles_map = {}
             if cutoff_date and oldest_rss_date and oldest_rss_date > cutoff_date:
                 if on_progress:
-                    on_progress(f"Gap detected in '{hub}', scraping pages...", 0, None)
+                    on_progress(f"Gap detected in '{hub_id}', scraping pages...", 0, None)
                 # Step 3: Gap detected, start scraping hub pages
-                scraped_articles_map = self._scrape_hub_pages(hub, cutoff_date)
+                scraped_articles_map = self._scrape_hub_pages(hub_id, cutoff_date)
 
             # Step 4: Combine and deduplicate
             combined_articles_map = {**scraped_articles_map, **rss_articles_map}
@@ -124,7 +133,7 @@ class HabrProvider:
                 title=entry.title,
                 published_date=published_dt,
                 source=self.source_name,
-                extra_data={'tags': tags}
+                extra_data={'tags': tags, 'hub_id': hub}
             )
             articles.append(article)
         return articles
@@ -165,7 +174,7 @@ class HabrProvider:
                         continue # Skip articles older than or same as stop_date
 
                     scraped_articles[guid] = Article(
-                        guid=guid, link=link, title=title, published_date=pub_date, source=self.source_name, extra_data={}
+                        guid=guid, link=link, title=title, published_date=pub_date, source=self.source_name, extra_data={'hub_id': hub}
                     )
                 
                 if page_is_getting_old:
@@ -234,12 +243,14 @@ class HabrProvider:
             # Updated selectors for current Habr.com structure
             rating_text = self._find_text(soup, [".tm-votes-lever__score-counter"])
             comments_text = self._find_text(soup, [".article-comments-counter-link span.value"])
+            bookmarks_text = self._find_text(soup, [".tm-bookmarks-button__counter"])
 
             extra_data = {
                 'rating': int(rating_text.replace('+', '').replace('−', '-')) if rating_text else None,
                 'views': self._find_text(soup, [".tm-icon-counter__value"]),
                 'reading_time': self._find_text(soup, [".tm-article-reading-time__label"]),
-                'comments': int(comments_text) if comments_text else None
+                'comments': int(comments_text) if comments_text else None,
+                'bookmarks': int(bookmarks_text) if bookmarks_text else None
             }
             
             return {

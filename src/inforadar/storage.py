@@ -9,7 +9,7 @@ from .models import Base, Article
 class Storage:
     def __init__(self, db_url: str = "sqlite:///inforadar.db"):
         self.engine = create_engine(db_url)
-        self._Session = sessionmaker(bind=self.engine)
+        self._Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def init_db(self):
         """Creates all tables in the database based on the models."""
@@ -140,3 +140,40 @@ class Storage:
         """Gets the most recent article's publication date for a specific source."""
         with self._Session() as session:
             return session.query(func.max(Article.published_date)).filter(Article.source == source_name).scalar()
+
+    def get_article_by_guid(self, guid: str) -> Optional[Article]:
+        """Retrieves a single article by its GUID."""
+        with self._Session() as session:
+            return session.query(Article).filter(Article.guid == guid).first()
+
+    def add_article(self, article: Article) -> bool:
+        """Adds a new article to the database."""
+        with self._Session() as session:
+            try:
+                session.add(article)
+                session.commit()
+                return True
+            except Exception:
+                session.rollback()
+                return False
+
+    def update_article_fields(self, guid: str, updates: dict) -> bool:
+        """
+        Updates specific fields of an article identified by GUID.
+        'updates' is a dictionary of {field_name: new_value}.
+        """
+        with self._Session() as session:
+            article = session.query(Article).filter(Article.guid == guid).first()
+            if not article:
+                return False
+            
+            for field, value in updates.items():
+                if hasattr(article, field):
+                    setattr(article, field, value)
+            
+            try:
+                session.commit()
+                return True
+            except Exception:
+                session.rollback()
+                return False

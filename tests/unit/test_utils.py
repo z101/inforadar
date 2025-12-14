@@ -28,9 +28,16 @@ def test_habr_url_cleaner():
 
 @patch('inforadar.providers.habr.requests.get')
 def test_provider_handles_network_error(mock_get):
-    """Проверяет, что скрапер не падает при ошибке сети (NFT1.1.3)."""
+    """Проверяет, что скрапер не падает при ошибке сети и логирует ошибку."""
     mock_get.side_effect = requests.exceptions.RequestException("Connection error")
-    provider = HabrProvider(source_name='habr', config={}, storage=MagicMock())
-    # Ожидаем пустой словарь с дефолтными полями, а не падение
-    extra_data = provider._enrich_article_data("http://fake.url")
-    assert extra_data == {'extra_data': {}, 'content_md': None, 'comments_data': []}
+    
+    # We need to ensure _process_hub handles the error.
+    # In my implementation, _process_hub catches exception?
+    # Wait, _fetch_page_items catches RequestException and returns None.
+    # Base fetch loop sees None and increments error_count.
+    
+    provider = HabrProvider(source_name='habr', config={'hubs': ['py_hub']}, storage=MagicMock())
+    
+    report = provider.fetch()
+    
+    assert report['errors_count'] > 0

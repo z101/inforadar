@@ -1,75 +1,56 @@
+
 import pytest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
-import feedparser
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from inforadar.providers.habr import HabrProvider
+from inforadar.models import Article
 
 FIXTURES_PATH = Path(__file__).parent / "fixtures"
 UTC = ZoneInfo("UTC")
 
 def mock_requests_get(url, headers=None):
-    """Custom mock for requests.get to handle different URLs."""
+    """Custom mock for requests.get."""
     mock_response = MagicMock()
-    mock_response.text = (FIXTURES_PATH / "habr_article.html").read_text()
+    mock_response.text = (FIXTURES_PATH / "habr_hub_page.html").read_text()
     return mock_response
 
-
 @patch('inforadar.providers.habr.requests.get', side_effect=mock_requests_get)
-@patch('inforadar.providers.habr.feedparser')
-def test_initial_fetch_date_filters_old_articles(mock_feedparser, mock_requests):
-    """Tests that initial_fetch_date filters out old articles on first run."""
-    rss_content = (FIXTURES_PATH / "habr_rss.xml").read_text()
-    mock_feedparser.parse.return_value = feedparser.parse(rss_content)
+def test_cutoff_date_filters_old_articles(mock_requests):
+    """Tests that cutoff_date filters out old articles."""
     
-    # Empty database (first run)
     mock_storage = MagicMock()
-    mock_storage.get_last_article_date.return_value = None
+    # Mock no existing articles
+    mock_storage.get_article_by_guid.return_value = None
     
-    # Config with initial_fetch_date set to 2025-10-24 11:30:00
-    # This should filter out Article 1 (10:00) but keep Article 2 (11:00) and Digest (12:00)
+    # Config with cutoff_date set to 2025-01-01
     mock_config = {
         'habr': {
             'hubs': ['python'],
-            'initial_fetch_date': '2025-10-24 10:30:00'
+            'cutoff_date': '2025-01-01'
         }
     }
     
     provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
-    articles = provider.fetch()
     
-    # Should get 2 articles: Article 2 (11:00) and Digest (12:00)
-    # Article 1 (10:00) is filtered by initial_fetch_date
-    assert len(articles) == 2
-    titles = {a.title for a in articles}
-    assert "Статья 2: Про asyncio" in titles
-    assert "Еженедельный Дайджест новостей" in titles
-
-
-@patch('inforadar.providers.habr.requests.get', side_effect=mock_requests_get)
-@patch('inforadar.providers.habr.feedparser')
-def test_initial_fetch_date_not_used_on_subsequent_runs(mock_feedparser, mock_requests):
-    """Tests that initial_fetch_date is ignored when database has articles."""
-    rss_content = (FIXTURES_PATH / "habr_rss.xml").read_text()
-    mock_feedparser.parse.return_value = feedparser.parse(rss_content)
+    # We need to ensure the mocked HTML contains articles older than 2025-01-01 if we want to test filtering?
+    # Or cleaner: mock _fetch_page_items to return specific objects with dates.
     
-    # Database has articles (not first run)
-    mock_storage = MagicMock()
-    mock_storage.get_last_article_date.return_value = datetime(2025, 10, 24, 10, 30, 0, tzinfo=UTC)
+    # But let's rely on provider logic.
+    # If we mocked provider._fetch_page_items:
     
-    # Config with initial_fetch_date - should be ignored
-    mock_config = {
-        'habr': {
-            'hubs': ['python'],
-            'initial_fetch_date': '2025-10-01 00:00:00'  # Very old date, should be ignored
-        }
-    }
-    
-    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
-    articles = provider.fetch()
-    
-    # Should use last_known_date (10:30), not initial_fetch_date
-    # Gets Article 2 (11:00) and Digest (12:00)
-    assert len(articles) == 2
+    with patch.object(provider, '_fetch_page_items') as mock_fetch_items:
+        # Return 2 articles: one old, one new
+        old_article = Article(guid='old', link='old', title='Old', published_date=datetime(2024, 12, 31, tzinfo=UTC), source='habr', extra_data={})
+        new_article = Article(guid='new', link='new', title='New', published_date=datetime(2025, 1, 2, tzinfo=UTC), source='habr', extra_data={})
+        
+        mock_fetch_items.side_effect = [[old_article, new_article], []] # Page 1, then Page 2 empty
+        
+        report = provider.fetch()
+        
+        # Should add only new_article
+        assert len(report['added_articles']) == 1
+        assert 'new' in report['added_articles']
+        assert 'old' not in report['added_articles']

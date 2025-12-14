@@ -38,7 +38,7 @@ $(VENV_DIR)/touchfile: pyproject.toml
 	@echo ">>> Установка зависимостей в режиме редактирования..."
 	@# Устанавливаем сам пакет и зависимости для тестов
 	@$(PIP) install -e .
-	@$(PIP) install pytest pytest-mock pytest-bdd
+	@$(PIP) install pytest pytest-mock pytest-bdd requests-mock
 	@# Обновляем "флаг" успешной установки
 	@touch $(VENV_DIR)/touchfile
 

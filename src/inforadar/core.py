@@ -2,7 +2,7 @@ from .storage import Storage
 from .config import load_config
 from .providers.habr import HabrProvider
 from .models import Article
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Any
 from datetime import datetime, timedelta, timezone
 import time
 import random
@@ -16,16 +16,13 @@ class CoreEngine:
         self.storage = Storage() # Uses default DB path
         self.storage.init_db() # Ensure DB is created
 
-    def run_sync(self, source_name: Optional[str] = None, progress: Optional[Progress] = None, log_callback: Optional[Callable[[str], None]] = None):
+    def run_sync(self, source_names: Optional[List[str]] = None, progress: Optional[Progress] = None, log_callback: Optional[Callable[[str], None]] = None, cancel_event: Optional[Any] = None):
         """Runs the sync process for configured sources."""
         sources = self.config.get('sources', {})
         
-        # Filter sources if specific one requested
-        if source_name:
-            if source_name not in sources:
-                print(f"Source '{source_name}' not found in configuration.")
-                return
-            sources = {source_name: sources[source_name]}
+        # Filter sources if specific ones requested
+        if source_names:
+            sources = {name: sources[name] for name in source_names if name in sources}
 
         total_added = 0
         total_updated = 0
@@ -46,6 +43,9 @@ class CoreEngine:
         with progress_ctx as p:
             
             for name, config in sources.items():
+                if cancel_event and cancel_event.is_set():
+                    break
+
                 if config.get('type') == 'habr':
                     provider = HabrProvider(name, config, self.storage)
                     
@@ -56,12 +56,15 @@ class CoreEngine:
                         if log_callback:
                             log_callback(f"[{name}] {description}")
 
-                    new_articles = provider.fetch(on_progress=update_progress)
+                    report = provider.fetch(on_progress=update_progress, cancel_event=cancel_event)
                     
-                    if new_articles:
-                        result = self.storage.add_or_update_articles(new_articles)
-                        total_added += result['added']
-                        total_updated += result['updated']
+                    if report:
+                        total_added += len(report.get('added_articles', []))
+                        total_updated += len(report.get('updated_articles', []))
+                        
+                        # Log details if needed
+                        if log_callback and report.get('errors_count', 0) > 0:
+                            log_callback(f"[{name}] Completed with {report['errors_count']} errors.")
                     
                     p.remove_task(task_id)
 
@@ -138,3 +141,58 @@ class CoreEngine:
                 updated_count += 1
         
         print(f"Successfully refreshed metadata for {updated_count} articles.")
+    def run_sync(self, source_names: Optional[List[str]] = None, progress: Optional[Progress] = None, log_callback: Optional[Callable[[str], None]] = None, cancel_event: Optional[Any] = None):
+        """Runs the sync process for configured sources."""
+        sources = self.config.get('sources', {})
+        
+        # Filter sources if specific ones requested
+        if source_names:
+            sources = {name: sources[name] for name in source_names if name in sources}
+
+        total_added = 0
+        total_updated = 0
+
+        from contextlib import nullcontext
+        
+        if progress is None:
+            progress_ctx = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeRemainingColumn(),
+            )
+        else:
+            progress_ctx = nullcontext(progress)
+
+        with progress_ctx as p:
+            
+            for name, config in sources.items():
+                if cancel_event and cancel_event.is_set():
+                    break
+
+                if config.get('type') == 'habr':
+                    provider = HabrProvider(name, config, self.storage)
+                    
+                    task_id = p.add_task(f"Syncing {name}...", total=None)
+
+                    def update_progress(description: str, current: int, total: Optional[int]):
+                        p.update(task_id, description=f"[{name}] {description}", completed=current, total=total)
+                        if log_callback:
+                            log_callback(f"[{name}] {description}")
+
+                    report = provider.fetch(on_progress=update_progress, cancel_event=cancel_event)
+                    
+                    if report:
+                        total_added += len(report.get('added_articles', []))
+                        total_updated += len(report.get('updated_articles', []))
+                        
+                        # Log details if needed
+                        if log_callback and report.get('errors_count', 0) > 0:
+                            log_callback(f"[{name}] Completed with {report['errors_count']} errors.")
+                    
+                    p.remove_task(task_id)
+
+        if progress is None:
+            # Only print summary if we own the progress bar (CLI mode)
+            print(f"Sync complete. Added {total_added} new, updated {total_updated} existing.")

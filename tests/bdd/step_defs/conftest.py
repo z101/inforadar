@@ -2,6 +2,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
+import requests_mock as req_mock
 
 FIXTURES_PATH = Path(__file__).parent.parent.parent / "integration/fixtures"
 
@@ -16,18 +17,10 @@ def mock_config():
     }
 
 @pytest.fixture
-def mock_requests_get():
-    """Мок для requests.get, который будет использоваться в BDD."""
-    def _mock_get(url, headers=None):
-        mock_response = MagicMock()
-        if "articles/page" in url:
-            mock_response.text = (FIXTURES_PATH / "habr_hub_page.html").read_text()
-        else:
-            mock_response.text = (FIXTURES_PATH / "habr_article.html").read_text()
-        return mock_response
-
-    with patch('inforadar.providers.habr.requests.get', side_effect=_mock_get) as mock:
-        yield mock
+def requests_mock(request):
+    """Фикстура requests-mock, которая автоматически активируется для тестов."""
+    with req_mock.Mocker() as m:
+        yield m
 
 @pytest.fixture
 def mock_feedparser():

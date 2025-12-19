@@ -2,6 +2,7 @@ import threading
 import time
 from datetime import datetime
 from typing import List, TYPE_CHECKING
+import random
 
 from rich.console import Group
 from rich.live import Live
@@ -12,7 +13,8 @@ from rich.progress import (
     SpinnerColumn,
     TextColumn,
     BarColumn,
-    TimeRemainingColumn,
+    MofNCompleteColumn,
+    Task,
 )
 from rich.text import Text
 
@@ -29,6 +31,15 @@ RESERVED_LINES_FOR_UI = (
 )
 
 
+class OptionalMofNCompleteColumn(MofNCompleteColumn):
+    """Custom MofNCompleteColumn that renders nothing if task.total is None."""
+
+    def render(self, task: Task) -> Text:
+        if task.total is None:
+            return Text("")
+        return super().render(task)
+
+
 class FetchScreen(BaseScreen):
     """Screen for fetching articles with progress and logs."""
 
@@ -43,53 +54,118 @@ class FetchScreen(BaseScreen):
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(bar_width=None),
-            TimeRemainingColumn(),
+            OptionalMofNCompleteColumn(),
             expand=True,
         )
-        # Add an initial indefinite task for the 'init' state
-        self.progress.add_task("Press 's' to start...", total=None)
+        self.main_task_id = self.progress.add_task("Press 's' to start...", total=None)
         self.logs: List[str] = []
         self.cancel_event = threading.Event()
         self.worker_thread = None
         self.lock = threading.Lock()
 
-        self.state = "init"  # "init", "running", "cancelled", "finished"
+        self.state = "init"  # "init", "running"
+        self.is_active = True
+        self.log_scroll_offset = 0
+
+    def _reset_to_init_state(self):
+        """Resets the screen to its initial state after a process."""
+        self.progress.remove_task(self.main_task_id)
+        self.main_task_id = self.progress.add_task("Press 's' to start...", total=None)
+        self.state = "init"
+        self.log_scroll_offset = 0
 
     def work(self):
-        """The actual fetch logic that runs in a background thread."""
+        """Simulates Stage 1 of the fetch process."""
+        total_articles_found = 0
 
         def log_cb(msg):
             with self.lock:
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 self.logs.append(f"[{timestamp}] {msg}")
+                # Auto-scroll to bottom on new log unless user has scrolled up
+                if self.log_scroll_offset > 0:
+                    self.log_scroll_offset += 1
+                else:
+                    self.log_scroll_offset = 0
 
         try:
-            self.app.engine.run_sync(
-                source_names=(
-                    list(self.selected_sources) if self.selected_sources else None
-                ),
-                log_callback=log_cb,
-                progress=self.progress,
-                cancel_event=self.cancel_event,
+            log_cb("Starting Stage 1: collecting topics...")
+
+            # 1. Get configuration and determine sources
+            all_sources_config = self.app.engine.config.get("sources", {})
+            source_names_to_process = self.selected_sources or all_sources_config.keys()
+
+            # 2. Collect all topics from the selected sources
+            topics_to_process = []
+            for name in source_names_to_process:
+                if name in all_sources_config:
+                    source_config = all_sources_config[name]
+                    topics_to_process.extend(source_config.get("hubs", []))
+
+            # 3. Filter topics if a topic filter is set
+            if self.selected_topics:
+                topics_to_process = [
+                    topic
+                    for topic in topics_to_process
+                    if topic in self.selected_topics
+                ]
+
+            if not topics_to_process:
+                log_cb(
+                    "[yellow]No topics to process based on current filters.[/yellow]"
+                )
+                return
+
+            log_cb(f"Found {len(topics_to_process)} topics to process.")
+            time.sleep(1)
+
+            # 4. Set up progress bar for Stage 1
+            self.progress.update(
+                self.main_task_id,
+                description="Stage 1: Getting Articles",
+                total=len(topics_to_process),
+                completed=0,
+                visible=True,
             )
-            with self.lock:
-                self.logs.append("[green]Fetch completed.[/green]")
-                self.state = "finished"
+
+            # 5. Process topics
+            for i, topic in enumerate(topics_to_process):
+                if self.cancel_event.is_set():
+                    break
+
+                self.progress.update(
+                    self.main_task_id, description=f"Reading topic: {topic}"
+                )
+                log_cb(f"Reading topic: {topic} ({i+1}/{len(topics_to_process)})")
+
+                time.sleep(random.uniform(0.3, 1.0))
+
+                num_found = random.randint(0, 5)
+                total_articles_found += num_found
+                log_cb(f"Found {num_found} article links in {topic}")
+
+                self.progress.advance(self.main_task_id)
+
+            if self.cancel_event.is_set():
+                return
+
         except Exception as e:
             with self.lock:
-                self.logs.append(f"[red]Error: {str(e)}[/red]")
-                self.state = "finished"
+                log_cb(f"[red]Error: {str(e)}[/red]")
         finally:
-            if self.cancel_event.is_set() and self.state != "finished":
-                with self.lock:
+            with self.lock:
+                if self.cancel_event.is_set():
                     self.logs.append("[yellow]Fetch cancelled by user.[/yellow]")
-                    self.state = "cancelled"
+                elif "total_articles_found" in locals():
+                    self.logs.append(
+                        f"[green]Stage 1 finished. Found a total of {total_articles_found} articles to read.[/green]"
+                    )
+                self._reset_to_init_state()
 
     def start_fetch(self):
         if self.state == "init":
             self.state = "running"
-            # Remove the initial indefinite task
-            self.progress.remove_task(self.progress.tasks[0].id)
+            self.cancel_event = threading.Event()
             with self.lock:
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 self.logs.append(f"[{timestamp}] [cyan]Starting fetch...[/cyan]")
@@ -102,7 +178,6 @@ class FetchScreen(BaseScreen):
             with self.lock:
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 self.logs.append(f"[{timestamp}] [yellow]Cancelling...[/yellow]")
-            # The worker thread will see the event and stop
 
     def _build_header_text(self) -> str:
         """Builds header text matching the main screen's styling."""
@@ -139,9 +214,11 @@ class FetchScreen(BaseScreen):
         log_lines_to_show = self.app.console.height - RESERVED_LINES_FOR_UI
 
         with self.lock:
-            visible_logs = (
-                self.logs[-log_lines_to_show:] if log_lines_to_show > 0 else []
-            )
+            # Adjust slicing based on scroll offset
+            end_index = len(self.logs) - self.log_scroll_offset
+            start_index = max(0, end_index - log_lines_to_show)
+            visible_logs = self.logs[start_index:end_index]
+
             log_content = "\n".join(visible_logs)
 
         logs_panel = Panel(
@@ -154,11 +231,9 @@ class FetchScreen(BaseScreen):
 
         footer_text = ""
         if self.state == "init":
-            footer_text = "[[bold white]s[/bold white]] Start [[bold white]Esc, q[/bold white]] Exit"
+            footer_text = "[[bold white]s[/bold white]] Start [[bold white]j/k[/bold white]] Scroll [[bold white]Esc, q[/bold white]] Exit"
         elif self.state == "running":
-            footer_text = "[[bold white]Esc, q[/bold white]] Cancel"
-        else:  # "finished" or "cancelled"
-            footer_text = "[[bold white]Esc, q[/bold white]] Close"
+            footer_text = "[[bold white]j/k[/bold white]] Scroll [[bold white]Esc, q[/bold white]] Cancel"
 
         return Group(
             Text.from_markup(header, justify="center"),
@@ -179,39 +254,28 @@ class FetchScreen(BaseScreen):
                 refresh_per_second=10,
                 transient=True,
             ) as live:
-                while not self.cancel_event.is_set():
+                while self.is_active:
                     live.update(self._build_layout())
                     key = get_key()
                     if key:
                         if key in (Key.Q, Key.ESCAPE):
                             if self.state == "running":
                                 self.cancel_fetch()
-                            else:
-                                break  # Exit the loop and screen
+                            elif self.state == "init":
+                                self.is_active = False
                         elif key == Key.S and self.state == "init":
                             self.start_fetch()
+                        elif key == Key.K:  # Scroll up
+                            with self.lock:
+                                max_scroll = len(self.logs) - 1
+                                self.log_scroll_offset = min(
+                                    max_scroll, self.log_scroll_offset + 1
+                                )
+                        elif key == Key.J:  # Scroll down
+                            with self.lock:
+                                self.log_scroll_offset = max(
+                                    0, self.log_scroll_offset - 1
+                                )
 
-                    # Check if worker is done
-                    if (
-                        self.state in ("finished", "cancelled")
-                        and self.worker_thread
-                        and not self.worker_thread.is_alive()
-                    ):
-                        # Just wait for final 'q'
-                        pass
-
-                    # Exit loop if worker finished and we are not in running state
-                    if (
-                        self.state != "running"
-                        and self.worker_thread
-                        and not self.worker_thread.is_alive()
-                    ):
-                        # Final render, then wait for q
-                        live.update(self._build_layout())
-                        while get_key() not in (Key.Q, Key.ESCAPE):
-                            time.sleep(0.1)
-                        break
-
-                    # Removed redundant time.sleep(0.05)
         finally:
             self.app.console.show_cursor(False)

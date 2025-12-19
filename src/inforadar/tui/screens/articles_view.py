@@ -149,10 +149,9 @@ class ArticlesViewScreen(ViewScreen):
             return True
         elif key == Key.F:  # f - Fetch
             fetch_screen = FetchScreen(
-                self.app, self.selected_sources, self.selected_topics
+                self.app, self, self.selected_sources, self.selected_topics
             )
-            fetch_screen.run()
-            self.refresh_data()
+            self.app.push_screen(fetch_screen)
             return True
         elif (
             key == Key.SHIFT_G and False

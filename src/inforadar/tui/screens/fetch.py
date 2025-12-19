@@ -1,8 +1,7 @@
 import threading
 import time
 from datetime import datetime
-from typing import List, TYPE_CHECKING
-import random
+from typing import List, TYPE_CHECKING, Any
 
 from rich.console import Group
 from rich.live import Live
@@ -19,7 +18,6 @@ from rich.progress import (
 from rich.text import Text
 
 from inforadar.tui.screens.base import BaseScreen
-from inforadar.tui.input import get_key
 from inforadar.tui.keys import Key
 
 if TYPE_CHECKING:
@@ -44,9 +42,14 @@ class FetchScreen(BaseScreen):
     """Screen for fetching articles with progress and logs."""
 
     def __init__(
-        self, app: "AppState", selected_sources: set = None, selected_topics: set = None
+        self,
+        app: "AppState",
+        parent: Any,
+        selected_sources: set = None,
+        selected_topics: set = None,
     ):
         super().__init__(app)
+        self.parent = parent
         self.selected_sources = selected_sources or set()
         self.selected_topics = selected_topics or set()
 
@@ -63,14 +66,29 @@ class FetchScreen(BaseScreen):
         self.worker_thread = None
         self.lock = threading.Lock()
 
-        self.state = "init"  # "init", "running"
-        self.is_active = True
+        self.state = "init"  # "init", "running", "done"
         self.log_scroll_offset = 0
+        self.live: Optional[Live] = None
+        self.manages_own_screen = True
+        self.needs_final_render = False
+
+    def on_leave(self) -> None:
+        """Cleanly stops the Live object when the screen is popped."""
+        if self.live:
+            self.live.stop()
+            self.live = None
+
+    def on_resize(self):
+        if self.live:
+            self.live.stop()
+            self.live = None
 
     def _reset_to_init_state(self):
         """Resets the screen to its initial state after a process."""
         self.progress.remove_task(self.main_task_id)
-        self.main_task_id = self.progress.add_task("Press 's' to start...", total=None)
+        self.main_task_id = self.progress.add_task(
+            "Press 's' to start...", total=None
+        )
         self.state = "init"
         self.log_scroll_offset = 0
 
@@ -138,9 +156,9 @@ class FetchScreen(BaseScreen):
                 )
                 log_cb(f"Reading topic: {topic} ({i+1}/{len(topics_to_process)})")
 
-                time.sleep(random.uniform(0.3, 1.0))
+                time.sleep(0.5)
 
-                num_found = random.randint(0, 5)
+                num_found = 5
                 total_articles_found += num_found
                 log_cb(f"Found {num_found} article links in {topic}")
 
@@ -148,6 +166,10 @@ class FetchScreen(BaseScreen):
 
             if self.cancel_event.is_set():
                 return
+
+            # On success, refresh the parent screen's data
+            if hasattr(self.parent, "refresh_data"):
+                self.parent.refresh_data()
 
         except Exception as e:
             with self.lock:
@@ -161,6 +183,7 @@ class FetchScreen(BaseScreen):
                         f"[green]Stage 1 finished. Found a total of {total_articles_found} articles to read.[/green]"
                     )
                 self._reset_to_init_state()
+                self.needs_final_render = True
 
     def start_fetch(self):
         if self.state == "init":
@@ -174,10 +197,48 @@ class FetchScreen(BaseScreen):
 
     def cancel_fetch(self):
         if self.state == "running":
+            self.state = "done"  # Move to done state
             self.cancel_event.set()
             with self.lock:
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 self.logs.append(f"[{timestamp}] [yellow]Cancelling...[/yellow]")
+
+    def needs_refresh(self) -> bool:
+        """Indicates to the main app loop if this screen needs frequent updates."""
+        return self.state == "running" or self.needs_final_render
+
+    def handle_input(self, key: str) -> bool:
+        """Handles user input for the fetch screen."""
+        should_render = False
+        if key in (Key.Q, Key.ESCAPE):
+            if self.state == "running":
+                self.cancel_fetch()
+            else:  # 'init' or 'done'
+                self.app.pop_screen()
+            should_render = True
+        elif key == Key.S and self.state == "init":
+            self.start_fetch()
+            should_render = True
+        elif key == Key.K:  # Scroll up
+            with self.lock:
+                console_height = self.app.console.height
+                log_lines_to_show = (
+                    console_height - RESERVED_LINES_FOR_UI
+                    if console_height > RESERVED_LINES_FOR_UI
+                    else 1
+                )
+                max_scroll_offset = max(0, len(self.logs) - log_lines_to_show)
+
+                if self.log_scroll_offset < max_scroll_offset:
+                    self.log_scroll_offset += 1
+                    should_render = True
+        elif key == Key.J:  # Scroll down
+            with self.lock:
+                if self.log_scroll_offset > 0:
+                    self.log_scroll_offset -= 1
+                    should_render = True
+
+        return should_render
 
     def _build_header_text(self) -> str:
         """Builds header text matching the main screen's styling."""
@@ -209,9 +270,16 @@ class FetchScreen(BaseScreen):
         return " | ".join(parts)
 
     def _build_layout(self) -> Group:
-        """Assembles the renderable layout for the Live display."""
+        """Assembles the renderable layout for the screen."""
         header = self._build_header_text()
-        log_lines_to_show = self.app.console.height - RESERVED_LINES_FOR_UI
+
+        # Calculate height dynamically
+        console_height = self.app.console.height
+        log_lines_to_show = (
+            console_height - RESERVED_LINES_FOR_UI
+            if console_height > RESERVED_LINES_FOR_UI
+            else 1
+        )
 
         with self.lock:
             # Adjust slicing based on scroll offset
@@ -231,9 +299,11 @@ class FetchScreen(BaseScreen):
 
         footer_text = ""
         if self.state == "init":
-            footer_text = "[[bold white]s[/bold white]] Start [[bold white]j/k[/bold white]] Scroll [[bold white]Esc, q[/bold white]] Exit"
+            footer_text = "[[bold white]s[/bold white]] Start [[bold white]j/k[/bold white]] Scroll [[bold white]Esc, q[/bold white]] Back"
         elif self.state == "running":
             footer_text = "[[bold white]j/k[/bold white]] Scroll [[bold white]Esc, q[/bold white]] Cancel"
+        elif self.state == "done":
+            footer_text = "[[bold white]j/k[/bold white]] Scroll [[bold white]Esc, q[/bold white]] Back"
 
         return Group(
             Text.from_markup(header, justify="center"),
@@ -244,38 +314,22 @@ class FetchScreen(BaseScreen):
             Text.from_markup(footer_text, style="dim", justify="center"),
         )
 
-    def run(self):
-        """Blocking method that runs the fetch process within a Live context."""
-        try:
+    def render(self) -> None:
+        """Manages the Live object for rendering."""
+        if self.needs_final_render:
+            self.needs_final_render = False
+
+        if not self.live:
             self.app.console.clear()
-            with Live(
+            # On first render, create and start the Live object.
+            # screen=False because the main app loop is NOT managing clearing the screen for us.
+            self.live = Live(
                 self._build_layout(),
                 console=self.app.console,
+                screen=False,
                 refresh_per_second=10,
-                transient=True,
-            ) as live:
-                while self.is_active:
-                    live.update(self._build_layout())
-                    key = get_key()
-                    if key:
-                        if key in (Key.Q, Key.ESCAPE):
-                            if self.state == "running":
-                                self.cancel_fetch()
-                            elif self.state == "init":
-                                self.is_active = False
-                        elif key == Key.S and self.state == "init":
-                            self.start_fetch()
-                        elif key == Key.K:  # Scroll up
-                            with self.lock:
-                                max_scroll = len(self.logs) - 1
-                                self.log_scroll_offset = min(
-                                    max_scroll, self.log_scroll_offset + 1
-                                )
-                        elif key == Key.J:  # Scroll down
-                            with self.lock:
-                                self.log_scroll_offset = max(
-                                    0, self.log_scroll_offset - 1
-                                )
-
-        finally:
-            self.app.console.show_cursor(False)
+            )
+            self.live.start(refresh=True)
+        else:
+            # On subsequent renders, just update the renderable.
+            self.live.update(self._build_layout())

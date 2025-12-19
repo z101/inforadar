@@ -60,9 +60,8 @@ class ViewScreen(BaseScreen):
             sources = getattr(self, "selected_sources", set())
             topics = getattr(self, "selected_topics", set())
 
-            fetch_screen = FetchScreen(self.app, sources, topics)
-            fetch_screen.run()
-            self.refresh_data()
+            fetch_screen = FetchScreen(self.app, self, sources, topics)
+            self.app.push_screen(fetch_screen)
         elif cmd == "q":
             self.app.running = False
 

@@ -24,6 +24,9 @@ class AppState:
 
     def pop_screen(self):
         if self.screen_stack:
+            screen_to_pop = self.screen_stack[-1]
+            if hasattr(screen_to_pop, "on_leave"):
+                screen_to_pop.on_leave()
             self.screen_stack.pop()
         if not self.screen_stack:
             self.running = False
@@ -52,27 +55,30 @@ class AppState:
                 should_render = True
                 while self.running and self.current_screen:
                     if should_render:
-                        # Use home() only in command mode dealing with typing to prevent flickering.
-                        # Otherwise use clear() to ensure no artifacts (e.g. when changing pages).
-                        use_clear = True
-                        if (
-                            hasattr(self.current_screen, "command_mode")
-                            and self.current_screen.command_mode
-                        ):
-                            use_clear = False
-                        elif (
-                            hasattr(self.current_screen, "active_mode")
-                            and self.current_screen.active_mode
-                        ):
-                            use_clear = False
+                        manages_own_screen = (
+                            hasattr(self.current_screen, "manages_own_screen")
+                            and self.current_screen.manages_own_screen
+                        )
 
-                        if use_clear:
-                            self.console.clear()
-                        else:
-                            self.console.control(Control.home())
+                        if not manages_own_screen:
+                            # Use home() only in command mode dealing with typing to prevent flickering.
+                            # Otherwise use clear() to ensure no artifacts (e.g. when changing pages).
+                            use_clear = True
+                            if (
+                                hasattr(self.current_screen, "command_mode")
+                                and self.current_screen.command_mode
+                            ):
+                                use_clear = False
+                            elif (
+                                hasattr(self.current_screen, "active_mode")
+                                and self.current_screen.active_mode
+                            ):
+                                use_clear = False
 
-                        # Ensure we clear the rest of the screen if not using clear() and content shrunk (unlikely here but good practice)
-                        # Actually rich's clean screen usage handles full redraw usually.
+                            if use_clear:
+                                self.console.clear()
+                            else:
+                                self.console.control(Control.home())
 
                         self.current_screen.render()
                         should_render = False
@@ -90,8 +96,8 @@ class AppState:
                             should_render = self.current_screen.handle_input(key)
                     except ResizeScreen:
                         should_render = True
-                        # Update console size explicitly if needed (rich usually handles it)
-                        size = self.console.size
+                        if hasattr(self.current_screen, "on_resize"):
+                            self.current_screen.on_resize()
         except KeyboardInterrupt:
             pass  # Handle Ctrl+C gracefully
         finally:

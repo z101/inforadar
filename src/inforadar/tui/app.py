@@ -81,6 +81,7 @@ class AppState:
                                 self.console.control(Control.home())
 
                         self.current_screen.render()
+                        self.console.show_cursor(False)
                         should_render = False
 
                     try:

@@ -1,5 +1,5 @@
 from inforadar.storage import Storage
-from inforadar.config import load_config
+from inforadar.config import SettingsManager, get_db_url
 from inforadar.providers.habr import HabrProvider
 from inforadar.models import Article
 from typing import List, Optional, Callable, Any
@@ -14,15 +14,26 @@ from rich.progress import (
     TimeRemainingColumn,
     MofNCompleteColumn,
 )
+from alembic.config import Config
+from alembic import command
 
 
 class CoreEngine:
     """Orchestrates the entire data fetching and storing process."""
 
-    def __init__(self, config_path: str = "config.yml"):
-        self.config = load_config(config_path)
-        self.storage = Storage()  # Uses default DB path
-        self.storage.init_db()  # Ensure DB is created
+    def __init__(self):
+        db_url = get_db_url()
+        self._run_migrations(db_url)
+        self.storage = Storage(db_url)
+        # self.storage.init_db()  <- This is now handled by Alembic
+        self.settings = SettingsManager(self.storage._Session)
+        self.settings.load_settings()
+
+    def _run_migrations(self, db_url: str):
+        """Programmatically runs Alembic migrations to upgrade DB to the latest version."""
+        alembic_cfg = Config("alembic.ini")
+        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+        command.upgrade(alembic_cfg, "head")
 
     def run_sync(
         self,
@@ -32,7 +43,7 @@ class CoreEngine:
         cancel_event: Optional[Any] = None,
     ):
         """Runs the sync process for configured sources."""
-        sources = self.config.get("sources", {})
+        sources = self.settings.get("sources", {})
 
         # Filter sources if specific ones requested
         if source_names:
@@ -102,7 +113,7 @@ class CoreEngine:
     def get_sources_summary(self) -> List[dict]:
         """Gets a summary for each configured source (article count and last sync date)."""
         sources_summary = []
-        sources_config = self.config.get("sources", {})
+        sources_config = self.settings.get("sources", {})
         for name in sources_config:
             count = self.storage.get_article_count_by_source(name)
             latest_date = self.storage.get_latest_article_date_by_source(name)
@@ -167,7 +178,7 @@ class CoreEngine:
                 continue
 
             if article.source not in providers:
-                source_config = self.config.get("sources", {}).get(article.source)
+                source_config = self.settings.get("sources", {}).get(article.source)
                 if source_config and source_config.get("type") == "habr":
                     providers[article.source] = HabrProvider(
                         article.source, source_config, self.storage
@@ -194,7 +205,7 @@ class CoreEngine:
         cancel_event: Optional[Any] = None,
     ):
         """Runs the sync process for configured sources."""
-        sources = self.config.get("sources", {})
+        sources = self.settings.get("sources", {})
 
         # Filter sources if specific ones requested
         if source_names:

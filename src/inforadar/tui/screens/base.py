@@ -13,10 +13,14 @@ class BaseScreen:
 
     def handle_input(self, key: str) -> bool:
         from inforadar.tui.screens.help import HelpScreen
+        from inforadar.tui.screens.settings_screen import SettingsScreen
         from inforadar.tui.keys import Key
 
         if key == Key.QUESTION:
             self.app.push_screen(HelpScreen(self.app))
+            return True
+        elif key == Key.S:
+            self.app.push_screen(SettingsScreen(self.app))
             return True
         elif key == Key.Q and len(self.app.screen_stack) == 1:
             self.app.running = False

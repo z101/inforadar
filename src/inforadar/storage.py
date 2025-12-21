@@ -12,8 +12,11 @@ class Storage:
         self._Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def init_db(self):
-        """Creates all tables in the database based on the models."""
-        Base.metadata.create_all(self.engine)
+        """
+        This method is now a no-op. Database creation and migration are
+        handled by Alembic.
+        """
+        pass
 
     def add_or_update_articles(self, articles: List[Article]) -> dict:
         """

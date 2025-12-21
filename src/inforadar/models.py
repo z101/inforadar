@@ -25,3 +25,15 @@ class Article(Base):
 
     def __repr__(self):
         return f"<Article(id={self.id}, title='{self.title[:30]}...', status_read={self.status_read})>"
+
+
+class Setting(Base):
+    __tablename__ = 'settings'
+
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)
+    type = Column(String, nullable=False, default='string') # 'string', 'integer', 'boolean', 'list'
+    description = Column(String, nullable=True)
+
+    def __repr__(self):
+        return f"<Setting(key='{self.key}', value='{self.value}')>"

@@ -19,6 +19,8 @@ dependencies = [
     "beautifulsoup4",
     "feedparser",
     "markdownify",
+    "appdirs",
+    "alembic",
 
 ]
 

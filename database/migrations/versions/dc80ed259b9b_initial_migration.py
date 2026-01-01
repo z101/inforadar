@@ -6,7 +6,7 @@ Create Date: 2025-12-22 01:04:29.261875
 
 """
 from typing import Sequence, Union
-
+import json
 from alembic import op
 import sqlalchemy as sa
 
@@ -50,28 +50,25 @@ def upgrade() -> None:
         settings_table,
         [
             {
-                'key': 'sources.habr_python.type',
+                'key': 'sources.habr.type',
                 'value': 'habr',
                 'type': 'string',
                 'description': 'Type of the source.',
             },
             {
-                'key': 'sources.habr_python.hubs',
-                'value': 'python,django,fastapi',
-                'type': 'list',
-                'description': 'List of hubs to follow.',
+                'key': 'sources.habr.hubs',
+                'value': json.dumps([
+                    {'id': 'artificial_intelligence', 'slug': 'ИИ'},
+                    {'id': 'circuit_design', 'slug': 'Схем-ка'}
+                ]),
+                'type': 'json',
+                'description': 'List of hub objects to follow.',
             },
             {
-                'key': 'sources.habr_rust.type',
-                'value': 'habr',
+                'key': 'sources.habr.initial_fetch_date',
+                'value': '2025-12-13 00:00:00',
                 'type': 'string',
-                'description': 'Type of the source.',
-            },
-            {
-                'key': 'sources.habr_rust.hubs',
-                'value': 'rust',
-                'type': 'list',
-                'description': 'List of hubs to follow.',
+                'description': 'The earliest date to fetch articles from.',
             },
         ],
     )

@@ -1,4 +1,5 @@
 import yaml
+import json
 from pathlib import Path
 from appdirs import AppDirs
 from sqlalchemy.orm import sessionmaker
@@ -108,6 +109,8 @@ class SettingsManager:
             return value.lower() in ('true', '1', 'yes')
         if type_str == 'list':
             return [item.strip() for item in value.split(',')]
+        if type_str == 'json':
+            return json.loads(value)
         return value  # 'string'
 
     def get(self, key: str, default: Optional[Any] = None) -> Any:

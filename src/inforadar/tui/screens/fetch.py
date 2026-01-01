@@ -103,8 +103,7 @@ class FetchScreen(BaseScreen):
         self.log_scroll_offset = 0
 
     def work(self):
-        """Simulates Stage 1 of the fetch process."""
-        total_articles_found = 0
+        """Runs the actual sync process by calling the core engine."""
 
         def log_cb(msg):
             with self.lock:
@@ -113,90 +112,44 @@ class FetchScreen(BaseScreen):
                 self.logs.append(f"[grey50][{timestamp}][/grey50] {msg}")
 
                 if self.auto_scroll_enabled and is_at_bottom:
-                    # Stay at the bottom, do nothing to the offset
                     pass
                 else:
-                    # Freeze the view by incrementing offset to account for the new log
                     self.log_scroll_offset += 1
-
+        
         try:
-            log_cb("Starting Stage 1: collecting topics...")
+            log_cb("Initializing sync process...")
 
-            # 1. Get configuration and determine sources
-            all_sources_config = self.app.engine.config.get("sources", {})
-            source_names_to_process = self.selected_sources or all_sources_config.keys()
-
-            # 2. Collect all topics from the selected sources
-            topics_to_process = []
-            for name in source_names_to_process:
-                if name in all_sources_config:
-                    source_config = all_sources_config[name]
-                    topics_to_process.extend(source_config.get("hubs", []))
-
-            # 3. Filter topics if a topic filter is set
-            if self.selected_topics:
-                topics_to_process = [
-                    topic
-                    for topic in topics_to_process
-                    if topic in self.selected_topics
-                ]
-
-            if not topics_to_process:
-                log_cb(
-                    "[yellow]No topics to process based on current filters.[/yellow]"
-                )
-                return
-
-            log_cb(f"Found {len(topics_to_process)} topics to process.")
-            time.sleep(1)
-
-            # 4. Set up progress bar for Stage 1
-            self.progress.update(
-                self.main_task_id,
-                description="Stage 1: Getting Articles",
-                total=len(topics_to_process),
-                completed=0,
-                visible=True,
+            # Determine which sources to sync
+            source_names = list(self.selected_sources) if self.selected_sources else None
+            
+            # This is the real fetch call
+            self.app.engine.run_sync(
+                source_names=source_names,
+                progress=self.progress,
+                log_callback=log_cb,
+                cancel_event=self.cancel_event,
             )
 
-            # 5. Process topics
-            for i, topic in enumerate(topics_to_process):
-                if self.cancel_event.is_set():
-                    break
-
-                self.progress.update(
-                    self.main_task_id, description=f"Reading topic: {topic}"
-                )
-                log_cb(f"Reading topic: {topic} ({i+1}/{len(topics_to_process)})")
-
-                time.sleep(0.5)
-
-                num_found = 5
-                total_articles_found += num_found
-                log_cb(f"Found {num_found} article links in {topic}")
-
-                self.progress.advance(self.main_task_id)
-
-            if self.cancel_event.is_set():
-                return
-
             # On success, refresh the parent screen's data
-            if hasattr(self.parent, "refresh_data"):
+            if not self.cancel_event.is_set() and hasattr(self.parent, "refresh_data"):
+                log_cb("Refreshing articles view...")
                 self.parent.refresh_data()
+                log_cb("Done.")
 
         except Exception as e:
             with self.lock:
-                log_cb(f"[red]Error: {str(e)}[/red]")
+                log_cb(f"[bold red]An unexpected error occurred: {str(e)}[/bold red]")
+                logger.exception("Error during sync process in FetchScreen")
         finally:
             with self.lock:
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 if self.cancel_event.is_set():
                     self.logs.append(
-                        f"[grey50][{timestamp}][/grey50] [yellow]Fetch cancelled by user.[/yellow]"
+                        f"[grey50][{timestamp}][/grey50] [yellow]Sync cancelled by user.[/yellow]"
                     )
-                elif "total_articles_found" in locals():
+                else:
                     self.logs.append(
-                        f"[grey50][{timestamp}][/grey50] [green]Stage 1 finished. Found a total of {total_articles_found} articles to read.[/green]"
+                        f"[grey50][{timestamp}][/grey50] [green]Sync process finished.[/green]"
                     )
                 self._reset_to_init_state()
                 self.needs_final_render = True
@@ -234,7 +187,7 @@ class FetchScreen(BaseScreen):
             with self.lock:
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 self.logs.append(
-                    f"[grey50][{timestamp}][/grey50] [cyan]Starting fetch...[/cyan]"
+                    f"[grey50][{timestamp}][/grey50] [cyan]Starting sync...[/cyan]"
                 )
             self.worker_thread = threading.Thread(target=self.work, daemon=True)
             self.worker_thread.start()
@@ -386,7 +339,7 @@ class FetchScreen(BaseScreen):
         """Builds header text matching the main screen's styling."""
         parts = ["[bold green dim]Info Radar Fetch[/bold green dim]"]
 
-        sources_config = self.app.engine.config.get("sources", {})
+        sources_config = self.app.engine.settings.get("sources", {})
         cutoff_dates = [
             cfg.get("initial_fetch_date", "").split()[0]
             for cfg in sources_config.values()

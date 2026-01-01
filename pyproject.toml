@@ -26,4 +26,4 @@ dependencies = [
 
 # САМАЯ ВАЖНАЯ ЧАСТЬ ДЛЯ КОМАНДЫ `ir`
 [project.scripts]
-ir = "inforadar.main:app"
+ir = "inforadar.main:main"

@@ -18,6 +18,7 @@ class AppState:
         self.console = Console()
         self.running = True
         self.screen_stack: List["BaseScreen"] = []
+        self.screen_states = {}
 
     def push_screen(self, screen: "BaseScreen"):
         self.screen_stack.append(screen)

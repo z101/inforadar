@@ -22,8 +22,11 @@ class BaseScreen:
         elif key == Key.S:
             self.app.push_screen(SettingsScreen(self.app))
             return True
-        elif key == Key.Q and len(self.app.screen_stack) == 1:
-            self.app.running = False
+        elif key == Key.Q:
+            if len(self.app.screen_stack) > 1:
+                self.app.pop_screen()
+            else:
+                self.app.running = False
             return True
         elif key == Key.ESCAPE:
             if len(self.app.screen_stack) > 1:

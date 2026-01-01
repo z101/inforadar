@@ -16,6 +16,7 @@ from rich.progress import (
 )
 from alembic.config import Config
 from alembic import command
+import logging
 
 
 class CoreEngine:
@@ -31,9 +32,13 @@ class CoreEngine:
 
     def _run_migrations(self, db_url: str):
         """Programmatically runs Alembic migrations to upgrade DB to the latest version."""
-        alembic_cfg = Config("alembic.ini")
-        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
-        command.upgrade(alembic_cfg, "head")
+        try:
+            alembic_cfg = Config("database/alembic.ini")
+            alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+            command.upgrade(alembic_cfg, "head")
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Alembic migration failed: {e}", exc_info=True)
+            raise
 
     def run_sync(
         self,

@@ -1,3 +1,4 @@
+import fnmatch
 from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 from rich.markup import escape
@@ -29,12 +30,15 @@ class ArticlesViewScreen(ViewScreen):
 
         # Build hub slug map from config
         self.hub_map = {}
-        sources = self.app.engine.config.get("sources", {})
+        sources = self.app.engine.settings.get("sources", {})
         for source_cfg in sources.values():
             hubs = source_cfg.get("hubs", [])
             for hub in hubs:
                 if isinstance(hub, dict) and "id" in hub and "slug" in hub:
                     self.hub_map[hub["id"]] = hub["slug"]
+
+    def get_item_for_filter(self, item: Article) -> str:
+        return item.title
 
     def apply_current_sort(self):
         if self.current_sort == "date_desc":
@@ -92,9 +96,15 @@ class ArticlesViewScreen(ViewScreen):
         from inforadar.tui.screens.source_filter import SourceFilterScreen
         from inforadar.tui.screens.topic_filter import TopicFilterScreen
         from inforadar.tui.screens.fetch import FetchScreen
+        from inforadar.tui.screens.settings_screen import SettingsScreen
+        from inforadar.tui.screens.articles_help import ArticlesHelpScreen
 
-        if self.command_mode:
+        if self.command_mode or self.filter_mode:
             return super().handle_input(key)
+
+        if key == Key.QUESTION:
+            self.app.push_screen(ArticlesHelpScreen(self.app))
+            return True
 
         if key == Key.R:
             # Cycle sort modes: date_desc -> rating_desc -> rating_asc -> rating_desc
@@ -133,16 +143,26 @@ class ArticlesViewScreen(ViewScreen):
             return True
 
         elif key == Key.ESCAPE:
-            # If command mode is handled above, this is for normal mode ESC
+            if self.active_mode:
+                self.active_mode = False
+                self.input_buffer = ""
+                return True
+            
+            if self.filter_text or self.final_filter_text:
+                self.filter_text = ""
+                self.final_filter_text = ""
+                self.apply_filter_and_sort()
+                return True
+
             if self.current_sort != "date_desc":
                 self.current_sort = "date_desc"
                 self.apply_current_sort()
                 return True
-            # Otherwise allow bubbling up (which pops screen)
+            
             return super().handle_input(key)
 
-        if key == Key.S:  # s - Source Filter (Remapped from Sort)
-            self.app.push_screen(SourceFilterScreen(self.app, self))
+        if key == Key.S:  # s - Settings
+            self.app.push_screen(SettingsScreen(self.app))
             return True
         elif key == Key.T:  # t - Topic Filter
             self.app.push_screen(TopicFilterScreen(self.app, self))
@@ -158,13 +178,11 @@ class ArticlesViewScreen(ViewScreen):
         ):  # Disable G for now if needed, but S is Shift+s
             pass
 
-        if super().handle_input(key):
-            return True
 
         if key == Key.D:
             self.show_details = not self.show_details
             return True
-        return False
+        return super().handle_input(key)
 
     def refresh_data(self):
         # Fetch ALL articles
@@ -176,9 +194,21 @@ class ArticlesViewScreen(ViewScreen):
         if not self.filter_text:
             filtered = list(self.items)
         else:
-            filter_lower = self.filter_text.lower()
+            pattern = self.filter_text.lower()
+            
+            def check_pattern(text, pat):
+                text = text.lower()
+                parts = pat.split('*')
+                start_pos = 0
+                for part in parts:
+                    pos = text.find(part, start_pos)
+                    if pos == -1:
+                        return False
+                    start_pos = pos + len(part)
+                return True
+
             filtered = [
-                item for item in self.items if filter_lower in str(item).lower()
+                item for item in self.items if check_pattern(self.get_item_for_filter(item), pattern)
             ]
 
         # 2. Filter by Source

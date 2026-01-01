@@ -1,9 +1,11 @@
 import math
+import fnmatch
 from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 from rich import box
 from rich.table import Table
 from rich.text import Text
+from rich.markup import escape
 
 from inforadar.tui.screens.base import BaseScreen
 from inforadar.tui.command_line import CommandLine
@@ -32,6 +34,7 @@ class ViewScreen(BaseScreen):
         self.start_index = 0
         self.current_page_items: List[Any] = []
         self.filter_text = ""
+        self.final_filter_text = ""
         self.sort_key = None
         self.sort_reverse = False
         self.input_buffer = ""
@@ -43,11 +46,32 @@ class ViewScreen(BaseScreen):
 
         # Command Line Support
         self.command_mode = False
+        self.filter_mode = False
         self.command_line = CommandLine()
+
+        self.load_state()
+
+    def get_state_key(self) -> str:
+        return self.__class__.__name__
+
+    def load_state(self):
+        state = self.app.screen_states.get(self.get_state_key(), {})
+        self.filter_text = state.get("filter_text", "")
+        self.final_filter_text = state.get("final_filter_text", "")
+        if self.filter_text or self.final_filter_text:
+             self.apply_filter_and_sort()
+
+    def save_state(self):
+        state = {
+            "filter_text": self.filter_text,
+            "final_filter_text": self.final_filter_text
+        }
+        self.app.screen_states[self.get_state_key()] = state
 
     def execute_command(self):
         from inforadar.tui.screens.fetch import FetchScreen
         from inforadar.tui.screens.test_popup import TestPopupScreen
+        from inforadar.tui.screens.articles_help import ArticlesHelpScreen
 
         cmd = self.command_line.text.strip()
         if not cmd:
@@ -64,6 +88,8 @@ class ViewScreen(BaseScreen):
             self.app.push_screen(fetch_screen)
         elif cmd == "q":
             self.app.running = False
+        elif cmd == "help" or cmd == "?":
+            self.app.push_screen(ArticlesHelpScreen(self.app))
 
         # Clear after execution
         self.command_mode = False
@@ -72,15 +98,31 @@ class ViewScreen(BaseScreen):
     def refresh_data(self):
         """Load items from source."""
         pass
+    
+    def get_item_for_filter(self, item: Any) -> str:
+        # Default implementation, subclasses should override
+        return str(item)
 
     def apply_filter_and_sort(self):
         """Filter and sort items."""
         if not self.filter_text:
             self.filtered_items = list(self.items)
         else:
-            filter_lower = self.filter_text.lower()
+            pattern = self.filter_text.lower()
+            
+            def check_pattern(text, pat):
+                text = text.lower()
+                parts = pat.split('*')
+                start_pos = 0
+                for part in parts:
+                    pos = text.find(part, start_pos)
+                    if pos == -1:
+                        return False
+                    start_pos = pos + len(part)
+                return True
+
             self.filtered_items = [
-                item for item in self.items if filter_lower in str(item).lower()
+                item for item in self.items if check_pattern(self.get_item_for_filter(item), pattern)
             ]
 
         if self.sort_key:
@@ -119,6 +161,10 @@ class ViewScreen(BaseScreen):
 
         # Header
         header_text = self.title
+        if self.final_filter_text:
+            header_text += f" [white]|[/white] [yellow]{escape(self.final_filter_text)}[/yellow]"
+        elif self.filter_text:
+            header_text += " [white]|[/white] [yellow]FILTERED[/yellow]"
 
         console.print(Text.from_markup(header_text), justify="center")
 
@@ -184,9 +230,10 @@ class ViewScreen(BaseScreen):
         if total_pages < 1:
             total_pages = 1
 
-        if self.command_mode:
+        if self.command_mode or self.filter_mode:
             # Render Command Line
             # Layout: ":<text>" with cursor. Right align: Pager | Total
+            prompt = ":" if self.command_mode else "/"
 
             # Construct command part with cursor
             txt = self.command_line.text
@@ -198,7 +245,7 @@ class ViewScreen(BaseScreen):
             post_cursor = txt[cpos + 1 :]
 
             # Styled cursor (reverse video)
-            cmd_styled = Text(":")
+            cmd_styled = Text(prompt)
             cmd_styled.append(pre_cursor)
             cmd_styled.append(cursor_char, style="reverse")
             cmd_styled.append(post_cursor)
@@ -217,20 +264,9 @@ class ViewScreen(BaseScreen):
             console.print(footer_table)
 
         else:
-            filter_status = " [FILTERED]" if self.filter_text else ""
-
+            filter_status = " [FILTERED]" if self.filter_text or self.final_filter_text else ""
             info_status = ""
             if self.active_mode:
-                # Show active row number (relative to page or absolute? Prompt says "Active <номер выделенной строки")
-                # Usually means visible row number or absolute index + 1?
-                # User typed row number which is page-relative.
-                # If we scroll, does active row number change?
-                # If we show absolute index it's clearer: Item X
-                # But user types relative number.
-                # Let's show visible row number if visible, else absolute?
-                # "Active <row>" usually implies what the user sees.
-                # Let's show (active_cursor - start_index + 1) if in view?
-                # Or just absolute. Let's use visible row number for consistency with input.
                 visible_row = self.active_cursor - self.start_index + 1
                 info_status = f" | Active [green dim]{visible_row}[/green dim]"
             elif self.input_buffer:
@@ -248,19 +284,38 @@ class ViewScreen(BaseScreen):
         available_rows = max(1, console_height - self.RESERVED_ROWS)
         width = self.app.console.size[0]
 
-        if self.command_mode:
+        if self.command_mode or self.filter_mode:
+            def _update_filter():
+                if self.filter_mode:
+                    self.filter_text = self.command_line.text
+                    self.apply_filter_and_sort()
+
             if key == Key.ESCAPE:
+                if self.filter_mode:
+                    self.filter_text = self.final_filter_text
+                    self.apply_filter_and_sort()
                 self.command_mode = False
+                self.filter_mode = False
                 self.command_line.clear()
                 return True
             elif key == Key.ENTER:
-                self.execute_command()
+                if self.command_mode:
+                    self.execute_command()
+                elif self.filter_mode:
+                    self.final_filter_text = self.command_line.text
+                    self.filter_text = self.final_filter_text
+                
+                self.command_mode = False
+                self.filter_mode = False
+                self.command_line.clear()
                 return True
             elif key == Key.BACKSPACE or key == Key.CTRL_H:
                 self.command_line.delete_back()
+                _update_filter()
                 return True
             elif key == Key.DELETE:
                 self.command_line.delete_forward()
+                _update_filter()
                 return True
             elif key == Key.LEFT or key == Key.CTRL_B:
                 self.command_line.move_left()
@@ -282,66 +337,70 @@ class ViewScreen(BaseScreen):
                 return True
             elif key == Key.CTRL_W:
                 self.command_line.delete_word_back()
+                _update_filter()
                 return True
             elif key == Key.CTRL_U:
                 self.command_line.delete_to_start()
+                _update_filter()
                 return True
             elif len(key) == 1 and key.isprintable():
                 self.command_line.insert(key)
+                _update_filter()
                 return True
             return True
 
         # Normal Mode
         if key == Key.COLON:
             self.command_mode = True
+            self.command_line.clear()
+            return True
+        
+        if key == Key.SLASH:
+            self.filter_mode = True
+            self.command_mode = False
+            self.command_line.clear()
+            self.command_line.set_text(self.filter_text)
+            self.final_filter_text = ""
             return True
 
-        # Esc exits Active Mode
         if key == Key.ESCAPE:
             if self.active_mode:
                 self.active_mode = False
                 self.input_buffer = ""
                 return True
-            else:
-                # If not active, let parent handle it (e.g. pop screen)
-                return super().handle_input(key)
+            if self.filter_text or self.final_filter_text:
+                self.filter_text = ""
+                self.final_filter_text = ""
+                self.apply_filter_and_sort()
+                self.save_state()
+                return True
+            return super().handle_input(key)
+        
+        if key == Key.Q:
+             self.save_state()
+             return super().handle_input(key)
 
         # Digits enter/update Active Mode
         if key.isdigit():
-            # If in active mode and user types digits, we assume they are typing a NEW number
-            # So we append to buffer and UPADTE active cursor
             new_buffer = self.input_buffer + key
-
-            # Validate if it maps to a row on current page
-            # Row numbers are 1-based relative to current page items (visible)
-            # Max row = len(current_page_items)
-            # BUT we might be at start of typing.
-
-            # If we just switched pages, input_buffer might be stale?
-            # We clear input_buffer on navigation below.
-
             if self.current_page_items:
                 try:
                     row_num = int(new_buffer)
                     if 1 <= row_num <= len(self.current_page_items):
                         self.input_buffer = new_buffer
                         self.active_mode = True
-                        # Map to absolute cursor
                         self.active_cursor = self.start_index + (row_num - 1)
                         return True
                 except ValueError:
                     pass
 
-            # If invalid, consume but don't update? Or update buffer but don't set active?
-            # Existing logic just updated buffer if valid.
-            if int(new_buffer) <= available_rows:  # Just a sanity check approx
+            if int(new_buffer) <= available_rows:
                 self.input_buffer = new_buffer
             return True
 
         if key == Key.BACKSPACE:
             if self.input_buffer:
                 self.input_buffer = self.input_buffer[:-1]
-                # Update active cursor if buffer is valid
                 if self.input_buffer:
                     try:
                         row_num = int(self.input_buffer)
@@ -350,11 +409,6 @@ class ViewScreen(BaseScreen):
                             self.active_cursor = self.start_index + (row_num - 1)
                     except ValueError:
                         pass
-                else:
-                    # Buffer empty, remain active? or exit active?
-                    # Usually Backspace until empty exits specific selection but maybe keeps active mode on 0?
-                    # Let's keep active mode but cursor might not move
-                    pass
             return True
 
         if key == Key.ENTER:
@@ -364,7 +418,6 @@ class ViewScreen(BaseScreen):
                     self.on_select(item)
                 return True
             if self.input_buffer:
-                # Legacy behavior if for some reason not active
                 try:
                     row_num = int(self.input_buffer)
                     if 1 <= row_num <= len(self.current_page_items):
@@ -376,66 +429,36 @@ class ViewScreen(BaseScreen):
                 return True
 
         # Navigation
-
-        # If in Active Mode, J/K move cursor by 1 (Cyclic within page)
-        if self.active_mode:
-            # Calculate page boundary
-            console_height = self.app.console.size[1]
-            available_rows = max(1, console_height - self.RESERVED_ROWS)
-
-            # Determine indices for current page
-            page_start = self.start_index
-
-            # How many items on this page?
-            # It's min(available_rows, total - page_start)
-            total = len(self.filtered_items)
-            page_items_count = min(available_rows, total - page_start)
-
-            if page_items_count > 0:
-                # current relative index
-                rel_cursor = self.active_cursor - page_start
-                # Safety clamp if for some reason out of sync
-                if rel_cursor < 0:
-                    rel_cursor = 0
-                if rel_cursor >= page_items_count:
-                    rel_cursor = page_items_count - 1
-
-                if key == Key.UP or key == Key.K:
-                    rel_cursor = (rel_cursor - 1 + page_items_count) % page_items_count
-                    self.active_cursor = page_start + rel_cursor
-                    self.input_buffer = ""
-                    return True
-                elif key == Key.DOWN or key == Key.J:
-                    rel_cursor = (rel_cursor + 1) % page_items_count
-                    self.active_cursor = page_start + rel_cursor
-                    self.input_buffer = ""
-                    return True
-
-        # Clear buffer on any other navigation key if not caught above
-        # (Though we cleared it in active mode branches)
-
-        if self.input_buffer and not self.active_mode:
+        if self.input_buffer and key not in [Key.J, Key.K, Key.UP, Key.DOWN]:
             self.input_buffer = ""
 
-        if key == Key.UP or key == Key.J:  # Previous Block (J = Backward)
-            # Normal mode: Block Scroll
-            if self.start_index > 0:
-                self.start_index = max(0, self.start_index - available_rows)
-                return True
+        # J/K and Arrow keys for cursor movement (activates active_mode)
+        if key == Key.DOWN or key == Key.J:
+            if not self.active_mode:
+                self.active_mode = True
+            else:
+                if len(self.filtered_items) > 0:
+                    self.active_cursor = (self.active_cursor + 1) % len(self.filtered_items)
 
-        elif key == Key.DOWN or key == Key.K:  # Next Block (K = Forward)
-            # Normal mode: Block Scroll
-            if self.start_index + len(self.current_page_items) < len(
-                self.filtered_items
-            ):
-                self.start_index += len(self.current_page_items)
-                return True
+            self.input_buffer = ""
+            return True
+
+        if key == Key.UP or key == Key.K:
+            if not self.active_mode:
+                self.active_mode = True
+            else:
+                if len(self.filtered_items) > 0:
+                    self.active_cursor = (self.active_cursor - 1 + len(self.filtered_items)) % len(self.filtered_items)
+
+            self.input_buffer = ""
+            return True
+
 
         elif key == Key.G:  # First page (Double 'g')
             if self.pending_g:
                 if self.start_index != 0:
                     self.start_index = 0
-                    self.active_cursor = 0  # specific to g
+                    self.active_cursor = 0
                     if self.active_mode:
                         self.active_cursor = 0
                     self.pending_g = False
@@ -443,38 +466,34 @@ class ViewScreen(BaseScreen):
                 self.pending_g = False
             else:
                 self.pending_g = True
-                return False  # Wait for next key
+                return False
 
         elif key == Key.SHIFT_G:  # Last page
-            # Calculate the start of the last page
             total = len(self.filtered_items)
             if total > 0:
                 last_page_idx = (total - 1) // available_rows
                 new_start = last_page_idx * available_rows
                 if self.start_index != new_start:
                     self.start_index = new_start
-                    # If active mode, move cursor to last item?
-                    # Vim G usually moves cursor to last line.
                     if self.active_mode:
                         self.active_cursor = total - 1
                     return True
 
-        elif key == Key.R:  # r - Read/Sync
+        elif key == Key.R:
             self.app.push_screen(SyncActionScreen(self.app, self))
             return True
-        elif key == Key.F:  # f - Filter
+        elif key == Key.F:
             self.app.push_screen(FilterActionScreen(self.app, self))
             return True
-        elif key == Key.S:  # s - Sort
+        elif key == Key.S:
             self.app.push_screen(SortActionScreen(self.app, self))
             return True
-        elif key == Key.L:  # l - Next screen (generic)
+        elif key == Key.L:
             pass
         else:
             if super().handle_input(key):
                 return True
 
-        # Reset pending_g if any other key was processed
         if key != Key.G:
             self.pending_g = False
 

@@ -3,6 +3,10 @@ class CommandLine:
         self.text = ""
         self.cursor_pos = 0
 
+    def set_text(self, text: str):
+        self.text = text
+        self.cursor_pos = len(text)
+
     def insert(self, char: str):
         self.text = self.text[: self.cursor_pos] + char + self.text[self.cursor_pos :]
         self.cursor_pos += 1

@@ -20,7 +20,7 @@ for editing these items.
 CUSTOM_TYPE_SCHEMAS = {
     "sources.habr.hubs": {
         "description": "A list of Habr hubs to track. The 'ID' is the human-readable name, and the 'Slug' is the part of the URL that identifies the hub.",
-        "item_name": "Hub",
+        "item_name": "Habr Hub",
         "fields": [
             {"name": "id", "label": "ID"},
             {"name": "slug", "label": "Slug"},

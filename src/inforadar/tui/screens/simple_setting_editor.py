@@ -75,9 +75,9 @@ class SimpleSettingEditor(BaseScreen):
                 display_value = self.edit_value + "[reverse] [/reverse]"
 
             # Pad with spaces to clear potential artifacts from backspace
-            console.print(f"[bold]Value:[/bold] {display_value}" + " " * 20, highlight=False)
+            console.print(f"[dim green]> [/dim green]{display_value}" + " " * 20, highlight=False)
         else:
-            console.print(f"[bold]Value:[/bold] {self.edit_value}" + " " * 20, highlight=False)
+            console.print(f"[dim green]> [/dim green]{self.edit_value}" + " " * 20, highlight=False)
 
         # Error message if any (always reserve space)
         if self.error_message:

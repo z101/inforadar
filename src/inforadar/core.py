@@ -27,7 +27,7 @@ class CoreEngine:
         self._run_migrations(db_url)
         self.storage = Storage(db_url)
         # self.storage.init_db()  <- This is now handled by Alembic
-        self.settings = SettingsManager(self.storage._Session)
+        self.settings = SettingsManager(self.storage.Session)
         self.settings.load_settings()
 
     def _run_migrations(self, db_url: str):

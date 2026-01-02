@@ -152,34 +152,7 @@ def get_key() -> Optional[str]:
     if ch == "\x7f":
         return Key.BACKSPACE
 
-    if ch == "q" or ch == "Q":
-        return Key.Q
-    if ch == "s" or ch == "S":
-        return Key.S
-    if ch == "r" or ch == "R":
-        return Key.R
-    if ch == "f" or ch == "F":
-        return Key.F
-    if ch == "h" or ch == "H":
-        return Key.H
-    if ch == "j" or ch == "J":
-        return Key.J
-    if ch == "k" or ch == "K":
-        return Key.K
-    if ch == "l" or ch == "L":
-        return Key.L
-    if ch == "v" or ch == "V":
-        return Key.V
-    if ch == "c" or ch == "C":
-        return Key.C
-    if ch == "b" or ch == "B":
-        return Key.B
-    if ch == "d" or ch == "D":
-        return Key.D
-    if ch == "g":
-        return Key.G
-    if ch == "G":
-        return Key.SHIFT_G
+
     if ch == "?":
         return Key.QUESTION
     if ch == ":":

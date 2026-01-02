@@ -5,8 +5,9 @@ from appdirs import AppDirs
 from sqlalchemy.orm import sessionmaker
 from typing import Any, Optional
 import logging
+import ast
 
-from inforadar.models import Setting
+from inforadar.models import Setting, SettingListItem, SettingCustomField
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ def get_db_path() -> Path:
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             user_config = yaml.safe_load(f)
-        
+
         if user_config and 'database_path' in user_config:
             # Path in config can be relative to user's home or absolute
             db_path_str = user_config['database_path']
@@ -44,7 +45,7 @@ def get_db_path() -> Path:
 
     except Exception as e:
         log.error(f"Failed to read user config at {config_path}: {e}")
-    
+
     return default_db_path
 
 
@@ -93,22 +94,73 @@ class SettingsManager:
         current_level = data
         for i, part in enumerate(keys):
             if i == len(keys) - 1:
-                current_level[part] = self._convert_value(setting.value, setting.type)
+                current_level[part] = self._convert_value(setting)
             else:
                 if part not in current_level:
                     current_level[part] = {}
                 current_level = current_level[part]
 
-    def _convert_value(self, value: str, type_str: str) -> Any:
+    def _convert_value(self, setting: Setting) -> Any:
         """
-        Converts a string value to its proper type.
+        Converts a setting value to its proper type based on the setting's type.
         """
+        value = setting.value
+        type_str = setting.type
+
+        # Normalize legacy 'habr_hubs' type to 'custom'
+        if type_str == 'habr_hubs':
+            type_str = 'custom'
+
         if type_str == 'integer':
             return int(value)
         if type_str == 'boolean':
             return value.lower() in ('true', '1', 'yes')
+        if type_str == 'date':
+            return value  # Keep as string for now, could parse to datetime if needed
         if type_str == 'list':
-            return [item.strip() for item in value.split(',')]
+            # For list type, we need to load the list items from the SettingListItem table
+            with self._session_factory() as session:
+                list_items = session.query(SettingListItem).filter_by(setting_key=setting.key).order_by(SettingListItem.item_index).all()
+                return [item.item_value for item in list_items]
+        if type_str == 'custom':
+            # For custom type, we need to load the custom fields from the SettingCustomField table
+            with self._session_factory() as session:
+                custom_fields = session.query(SettingCustomField).filter_by(setting_key=setting.key).all()
+                
+                # If custom fields are present, use them
+                if custom_fields:
+                    items = {}
+                    for field in custom_fields:
+                        parts = field.field_name.split('_')
+                        if len(parts) > 1 and parts[-1].isdigit():
+                            idx = int(parts[-1])
+                            field_name = '_'.join(parts[:-1])
+                        else:
+                            idx = 0
+                            field_name = field.field_name
+
+                        if idx not in items:
+                            items[idx] = {}
+                        items[idx][field_name] = field.field_value
+                    return [items[key] for key in sorted(items.keys())]
+                
+                # Fallback: if no custom fields, try to parse from the 'value' column
+                # This handles initial migration data or corrupted states
+                if value:
+                    try:
+                        # Try parsing as JSON first (double quotes)
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        try:
+                            # If JSON fails, try Python literal_eval (single quotes)
+                            parsed_value = ast.literal_eval(value)
+                            if isinstance(parsed_value, list): # Ensure it's a list
+                                return parsed_value
+                        except (ValueError, SyntaxError):
+                            pass # Fall through to empty list
+
+            return [] # Default to empty list if no custom fields and parsing fails
+
         if type_str == 'json':
             return json.loads(value)
         return value  # 'string'
@@ -132,6 +184,62 @@ class SettingsManager:
             else:
                 return default
         return current_level
+
+    def set(self, key: str, value: Any, type_hint: str = 'string', description: str = None):
+        """
+        Sets a setting value in the database.
+        """
+        with self._session_factory() as session:
+            # Check if setting exists
+            setting = session.query(Setting).filter_by(key=key).first()
+
+            if setting is None:
+                # Create new setting
+                setting = Setting(key=key, value=str(value), type=type_hint, description=description)
+                session.add(setting)
+            else:
+                # Update existing setting
+                setting.value = str(value)
+                setting.type = type_hint
+                if description:
+                    setting.description = description
+
+            session.commit()
+
+            # If this is a list type, also update the list items
+            if type_hint == 'list' and isinstance(value, list):
+                # First, delete existing list items
+                session.query(SettingListItem).filter_by(setting_key=key).delete()
+
+                # Then add new list items
+                for idx, item_value in enumerate(value):
+                    list_item = SettingListItem(
+                        setting_key=key,
+                        item_index=idx,
+                        item_value=str(item_value)
+                    )
+                    session.add(list_item)
+
+            # If this is a custom type, also update the custom fields
+            elif type_hint == 'custom' and isinstance(value, list):
+                # First, delete existing custom fields
+                session.query(SettingCustomField).filter_by(setting_key=key).delete()
+
+                # Then add new custom fields
+                for idx, item_obj in enumerate(value):
+                    if isinstance(item_obj, dict):
+                        for field_name, field_value in item_obj.items():
+                            custom_field = SettingCustomField(
+                                setting_key=key,
+                                field_name=f"{field_name}_{idx}",
+                                field_value=str(field_value)
+                            )
+                            session.add(custom_field)
+
+            session.commit()
+
+            # Reload settings to reflect the change
+            self.load_settings()
 
     @property
     def all_settings(self) -> dict:

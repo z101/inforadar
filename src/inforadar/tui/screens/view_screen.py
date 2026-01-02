@@ -98,7 +98,7 @@ class ViewScreen(BaseScreen):
     def refresh_data(self):
         """Load items from source."""
         pass
-    
+
     def get_item_for_filter(self, item: Any) -> str:
         # Default implementation, subclasses should override
         return str(item)
@@ -109,7 +109,7 @@ class ViewScreen(BaseScreen):
             self.filtered_items = list(self.items)
         else:
             pattern = self.filter_text.lower()
-            
+
             def check_pattern(text, pat):
                 text = text.lower()
                 parts = pat.split('*')
@@ -304,7 +304,7 @@ class ViewScreen(BaseScreen):
                 elif self.filter_mode:
                     self.final_filter_text = self.command_line.text
                     self.filter_text = self.final_filter_text
-                
+
                 self.command_mode = False
                 self.filter_mode = False
                 self.command_line.clear()
@@ -354,7 +354,7 @@ class ViewScreen(BaseScreen):
             self.command_mode = True
             self.command_line.clear()
             return True
-        
+
         if key == Key.SLASH:
             self.filter_mode = True
             self.command_mode = False
@@ -375,7 +375,7 @@ class ViewScreen(BaseScreen):
                 self.save_state()
                 return True
             return super().handle_input(key)
-        
+
         if key == Key.Q:
              self.save_state()
              return super().handle_input(key)
@@ -498,3 +498,10 @@ class ViewScreen(BaseScreen):
             self.pending_g = False
 
         return False
+
+    def on_leave(self):
+        """Called when leaving this screen - ensure proper cleanup."""
+        # Save state when leaving the screen
+        self.save_state()
+        # Call parent implementation if exists
+        super().on_leave() if hasattr(super(), 'on_leave') else None

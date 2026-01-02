@@ -1,8 +1,19 @@
 from typing import Any, Dict, List, Tuple, TYPE_CHECKING
+import json
 from .view_screen import ViewScreen
+from ..keys import Key
+from ..schemas import CUSTOM_TYPE_SCHEMAS
 
 if TYPE_CHECKING:
     from inforadar.tui.app import AppState
+
+# Import the new editor screens
+from .simple_setting_editor import SimpleSettingEditor
+from .list_setting_editor import ListSettingEditor
+from .custom_list_editor import CustomListEditorScreen
+
+# The registry is no longer needed for custom types
+EDITOR_REGISTRY = {}
 
 
 class SettingsScreen(ViewScreen):
@@ -14,24 +25,41 @@ class SettingsScreen(ViewScreen):
         self.name_column_width = 0
         self.refresh_data()
 
-    def _flatten_settings(self, settings: Dict[str, Any], prefix: str = "") -> List[Tuple[str, Any]]:
-        """Recursively flattens a nested settings dictionary."""
+    def _flatten_settings(self, settings: Dict[str, Any], prefix: str = "") -> List[Tuple[str, Any, str]]:
+        """Recursively flattens a nested settings dictionary and includes type info."""
         flat_list = []
         for key, value in settings.items():
             new_prefix = f"{prefix}.{key}" if prefix else key
             if isinstance(value, dict):
                 flat_list.extend(self._flatten_settings(value, new_prefix))
             else:
-                flat_list.append((new_prefix, value))
+                # Get the type of the setting from the database
+                setting_type = self._get_setting_type(new_prefix)
+                flat_list.append((new_prefix, value, setting_type))
         return flat_list
+
+    def _get_setting_type(self, key: str) -> str:
+        """Get the type of a setting from the database."""
+        # Query the database to get the type of the setting
+        with self.app.engine.storage.Session() as session:
+            from inforadar.models import Setting
+            setting = session.query(Setting).filter_by(key=key).first()
+            if setting:
+                # Normalize legacy type
+                if setting.type == 'habr_hubs':
+                    return 'custom'
+                return setting.type
+            else:
+                # Default to 'string' if type is not found
+                return 'string'
 
     def refresh_data(self):
         """Load settings from the engine and calculate max name width."""
         all_settings = self.app.engine.settings.all_settings
         self.items = self._flatten_settings(all_settings)
-        
+
         if self.items:
-            max_key_len = max(len(key) for key, _ in self.items)
+            max_key_len = max(len(key) for key, _, _ in self.items)
             self.name_column_width = max_key_len + 2  # Add padding
         else:
             self.name_column_width = 20  # Default width
@@ -46,20 +74,130 @@ class SettingsScreen(ViewScreen):
             {"header": "Value", "ratio": 1, "no_wrap": True, "overflow": "ellipsis"},
         ]
 
-    def render_row(self, item: Tuple[str, Any], index: int) -> Tuple[List[str], str]:
+    def render_row(self, item: Tuple[str, Any, str], index: int) -> Tuple[List[str], str]:
         """Render a single setting item into a row."""
-        key, value = item
-        index_str = f"[green dim]{index}[/green dim]"
+        key, value, setting_type = item
+        index_str = f"[green dim]{index}[/dim green]"
         key_str = f"[green]{key}[/green]"
-        value_str = str(value)
         
+        value_str = str(value)
+
+        # Handle display for custom types (now parsed in config.py)
+        if setting_type == 'custom':
+            items = value # Value is already a list of dicts from config.py
+            if isinstance(items, list) and items:
+                # Format as ID: Slug, ...
+                schema = CUSTOM_TYPE_SCHEMAS.get(key)
+                if schema and len(schema['fields']) >= 2:
+                    id_field = schema['fields'][0]['name']
+                    slug_field = schema['fields'][1]['name']
+                    value_str = ", ".join([f"{h.get(id_field, '')}: {h.get(slug_field, '')}" for h in items])
+                else:
+                    value_str = f"[{len(items)} item(s)]"
+            elif isinstance(items, list):
+                value_str = "[No items]"
+
         return [index_str, key_str, value_str], ""
 
-    def get_item_for_filter(self, item: Tuple[str, Any]) -> str:
+
+    def get_item_for_filter(self, item: Tuple[str, Any, str]) -> str:
         """Return the setting name for filtering."""
         return item[0]
 
-    def on_select(self, item: Any):
-        """Handle setting selection."""
-        # TODO: Implement setting editing in a future step
+    def on_select(self, item: Tuple[str, Any, str]):
+        """Handle setting selection - open appropriate editor based on type."""
+        key, value, setting_type = item
+
+        # Check registry first
+        if setting_type in EDITOR_REGISTRY:
+             editor_cls = EDITOR_REGISTRY[setting_type]
+             editor = editor_cls(
+                 app=self.app,
+                 setting_key=key,
+                 current_value=value,
+                 description=self._get_setting_description(key),
+                 on_save=lambda new_value: self._save_setting(key, new_value, setting_type)
+             )
+             self.app.push_screen(editor)
+        elif setting_type in ['string', 'integer', 'date', 'boolean', 'json']:
+            # Open simple editor for basic types (including json, which is now handled as a string for editing)
+            editor = SimpleSettingEditor(
+                app=self.app,
+                setting_key=key,
+                current_value=json.dumps(value) if setting_type == 'json' and isinstance(value, (dict, list)) else value,
+                setting_type=setting_type,
+                description=self._get_setting_description(key),
+                on_save=lambda new_value: self._save_setting(key, new_value, setting_type)
+            )
+            self.app.push_screen(editor)
+        elif setting_type == 'list':
+            # Open list editor for list types
+            editor = ListSettingEditor(
+                app=self.app,
+                setting_key=key,
+                current_value=value,
+                description=self._get_setting_description(key),
+                on_save=lambda new_value: self._save_setting(key, new_value, setting_type)
+            )
+            self.app.push_screen(editor)
+        elif setting_type == 'custom':
+            # Use the new generic CustomListEditorScreen
+            if key not in CUSTOM_TYPE_SCHEMAS:
+                self.app.show_toast(f"No schema for '{key}'", "error")
+                return
+
+            editor = CustomListEditorScreen(
+                app=self.app,
+                setting_key=key,
+                current_value=value, # Value is already a list of dicts from config.py
+                description=self._get_setting_description(key),
+                on_save=lambda new_value: self._save_setting(key, new_value, 'custom') # Always save as 'custom'
+            )
+            self.app.push_screen(editor)
+        else:
+            # Fallback for any other unknown types
+            self.app.show_toast(f"No editor for type '{setting_type}'", "warning")
+
+
+    def handle_input(self, key: str) -> bool:
+        """Handle input, including Enter to select when only one item is filtered."""
+        if key == Key.ENTER and len(self.filtered_items) == 1:
+            # If only one item is filtered, select it directly
+            self.on_select(self.filtered_items[0])
+            return True
+        return super().handle_input(key)
+
+    def _get_setting_description(self, key: str) -> str:
+        """Get the description of a setting from the database."""
+        with self.app.engine.storage.Session() as session:
+            from inforadar.models import Setting
+            setting = session.query(Setting).filter_by(key=key).first()
+            if setting:
+                return setting.description
+            return f"Setting: {key}"
+
+    def _save_setting(self, key: str, value: Any, setting_type: str):
+        """Save a setting to the database."""
+        # Backup state to restore after refresh
+        was_active = self.active_mode
+        prev_cursor = self.active_cursor
+
+        self.app.engine.settings.set(key, value, setting_type)
+        
+        # Refresh the settings display
+        self.refresh_data()
+
+        # Restore state
+        self.input_buffer = ""  # Clear any partial input that might cause "Goto"
+        if was_active:
+             self.active_mode = True
+             # Ensure cursor is still within bounds
+             if self.filtered_items:
+                 self.active_cursor = min(prev_cursor, len(self.filtered_items) - 1)
+             else:
+                 self.active_cursor = 0
+
+    def on_leave(self):
+        """Called when leaving this screen - ensure proper cleanup."""
+        # Make sure the screen is properly refreshed when returning to it
         pass

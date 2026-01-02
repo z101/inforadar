@@ -11,6 +11,11 @@ class Storage:
         self.engine = create_engine(db_url)
         self._Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
+    @property
+    def Session(self):
+        """Returns the session maker for creating database sessions."""
+        return self._Session
+
     def init_db(self):
         """
         This method is now a no-op. Database creation and migration are

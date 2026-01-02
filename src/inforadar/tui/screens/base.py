@@ -33,3 +33,7 @@ class BaseScreen:
                 self.app.pop_screen()
                 return True
         return False
+
+    def on_leave(self):
+        """Called when leaving this screen."""
+        pass

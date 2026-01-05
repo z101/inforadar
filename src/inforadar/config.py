@@ -6,8 +6,10 @@ from sqlalchemy.orm import sessionmaker
 from typing import Any, Optional
 import logging
 import ast
+import logging
 
 from inforadar.models import Setting, SettingListItem, SettingCustomField
+from inforadar.tui.schemas import CUSTOM_TYPE_SCHEMAS
 
 log = logging.getLogger(__name__)
 
@@ -129,6 +131,23 @@ class SettingsManager:
                 
                 # If custom fields are present, use them
                 if custom_fields:
+                    schema = CUSTOM_TYPE_SCHEMAS.get(setting.key, {})
+                    type_map = {f["name"]: f.get("type", "str") for f in schema.get("fields", [])}
+
+                    def _cast_value(val_str: str, type_name: str) -> Any:
+                        if val_str is None or val_str == '':
+                            return None
+                        try:
+                            if type_name == "int":
+                                return int(val_str)
+                            if type_name == "float":
+                                return float(val_str)
+                            if type_name == "bool":
+                                return val_str.lower() in ('true', '1', 'yes')
+                        except (ValueError, TypeError):
+                            return None # Gracefully handle casting errors
+                        return val_str
+
                     items = {}
                     for field in custom_fields:
                         parts = field.field_name.split('_')
@@ -141,7 +160,10 @@ class SettingsManager:
 
                         if idx not in items:
                             items[idx] = {}
-                        items[idx][field_name] = field.field_value
+
+                        field_type = type_map.get(field_name, "str")
+                        items[idx][field_name] = _cast_value(field.field_value, field_type)
+                        
                     return [items[key] for key in sorted(items.keys())]
                 
                 # Fallback: if no custom fields, try to parse from the 'value' column
@@ -154,10 +176,21 @@ class SettingsManager:
                         try:
                             # If JSON fails, try Python literal_eval (single quotes)
                             parsed_value = ast.literal_eval(value)
-                            if isinstance(parsed_value, list): # Ensure it's a list
-                                return parsed_value
+                            if isinstance(parsed_value, list):
+                                # Handle list of strings (legacy format)
+                                if parsed_value and all(isinstance(i, str) for i in parsed_value):
+                                    schema = CUSTOM_TYPE_SCHEMAS.get(setting.key)
+                                    if schema and schema.get("fields"):
+                                        id_field = schema["fields"][0]["name"]
+                                        return [{id_field: s} for s in parsed_value]
+                                
+                                # Handle list of dicts
+                                if all(isinstance(i, dict) for i in parsed_value):
+                                    return parsed_value
+                            
+                            # Any other format (mixed list, etc.) is invalid and will fall through
                         except (ValueError, SyntaxError):
-                            pass # Fall through to empty list
+                            pass  # Fall through to empty list
 
             return [] # Default to empty list if no custom fields and parsing fails
 

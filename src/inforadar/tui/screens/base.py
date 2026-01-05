@@ -1,4 +1,6 @@
 from typing import TYPE_CHECKING
+from rich.align import Align
+from rich.console import Console, RenderableType
 
 if TYPE_CHECKING:
     from inforadar.tui.app import AppState
@@ -7,6 +9,7 @@ if TYPE_CHECKING:
 class BaseScreen:
     def __init__(self, app: "AppState"):
         self.app = app
+        self.need_clear = False
 
     def render(self):
         pass
@@ -37,3 +40,26 @@ class BaseScreen:
     def on_leave(self):
         """Called when leaving this screen."""
         pass
+
+
+class ModalScreen(BaseScreen):
+    """A screen that renders as a modal on top of the previous screen."""
+    
+    @property
+    def manages_own_screen(self) -> bool:
+        # This tells the app loop not to clear the screen before rendering
+        return True
+
+    def render(self):
+        # We need to render the screen below first
+        if len(self.app.screen_stack) > 1:
+            underlying_screen = self.app.screen_stack[-2]
+            underlying_screen.render()
+
+        # Now render the modal content on top
+        modal_content = self.render_modal_content()
+        self.app.console.print(Align.center(modal_content, vertical="middle"))
+
+    def render_modal_content(self) -> "Renderable":
+        """Subclasses must implement this to return a Rich renderable."""
+        raise NotImplementedError

@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 from .simple_setting_editor import SimpleSettingEditor
 from .list_setting_editor import ListSettingEditor
 from .custom_list_editor import CustomListEditorScreen
+from .habr_hubs_editor import HabrHubsEditorScreen
 
 # The registry is no longer needed for custom types
 EDITOR_REGISTRY = {}
@@ -90,8 +91,8 @@ class SettingsScreen(ViewScreen):
                 schema = CUSTOM_TYPE_SCHEMAS.get(key)
                 if schema and len(schema['fields']) >= 2:
                     id_field = schema['fields'][0]['name']
-                    slug_field = schema['fields'][1]['name']
-                    value_str = ", ".join([f"{h.get(id_field, '')}: {h.get(slug_field, '')}" for h in items])
+                    name_field = schema['fields'][1]['name']
+                    value_str = ", ".join([f"{h.get(id_field, '')}: {h.get(name_field, '')}" for h in items])
                 else:
                     value_str = f"[{len(items)} item(s)]"
             elif isinstance(items, list):
@@ -107,6 +108,18 @@ class SettingsScreen(ViewScreen):
     def on_select(self, item: Tuple[str, Any, str]):
         """Handle setting selection - open appropriate editor based on type."""
         key, value, setting_type = item
+
+        # Special case for Habr Hubs to use the specialized editor
+        if key == 'sources.habr.hubs':
+            editor = HabrHubsEditorScreen(
+                app=self.app,
+                setting_key=key,
+                current_value=value,
+                description=self._get_setting_description(key),
+                on_save=lambda new_value: self._save_setting(key, new_value, 'custom')
+            )
+            self.app.push_screen(editor)
+            return
 
         # Check registry first
         if setting_type in EDITOR_REGISTRY:
@@ -157,6 +170,8 @@ class SettingsScreen(ViewScreen):
         else:
             # Fallback for any other unknown types
             self.app.show_toast(f"No editor for type '{setting_type}'", "warning")
+
+
 
 
     def handle_input(self, key: str) -> bool:

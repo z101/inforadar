@@ -51,6 +51,11 @@ class ViewScreen(BaseScreen):
 
         self.load_state()
 
+    @property
+    def is_text_input_mode(self) -> bool:
+        """Returns True if the screen is in a mode that expects direct text input."""
+        return self.command_mode or self.filter_mode
+
     def get_state_key(self) -> str:
         return self.__class__.__name__
 
@@ -105,6 +110,8 @@ class ViewScreen(BaseScreen):
 
     def apply_filter_and_sort(self):
         """Filter and sort items."""
+        old_count = len(self.filtered_items)
+
         if not self.filter_text:
             self.filtered_items = list(self.items)
         else:
@@ -124,6 +131,9 @@ class ViewScreen(BaseScreen):
             self.filtered_items = [
                 item for item in self.items if check_pattern(self.get_item_for_filter(item), pattern)
             ]
+
+        if old_count != len(self.filtered_items):
+            self.need_clear = True
 
         if self.sort_key:
             self.filtered_items.sort(key=self.sort_key, reverse=self.sort_reverse)
@@ -173,13 +183,6 @@ class ViewScreen(BaseScreen):
         if available_rows < 1:
             available_rows = 1
 
-        # Adjust start_index if active cursor is out of view (smooth scrolling logic)
-        if self.active_mode:
-            if self.active_cursor < self.start_index:
-                self.start_index = self.active_cursor
-            elif self.active_cursor >= self.start_index + available_rows:
-                self.start_index = self.active_cursor - available_rows + 1
-
         # Calculate items for current "page"
         self.current_page_items = self.calculate_visible_range(
             self.start_index, available_rows, width
@@ -223,7 +226,7 @@ class ViewScreen(BaseScreen):
 
         # Footer
         total_items = len(self.filtered_items)
-        current_page = (self.start_index // available_rows) + 1
+        current_page = (self.start_index // available_rows) + 1 if available_rows > 0 else 1
         total_pages = (
             math.ceil(total_items / available_rows) if available_rows > 0 else 1
         )
@@ -436,32 +439,32 @@ class ViewScreen(BaseScreen):
         if key == Key.DOWN or key == Key.J:
             if not self.active_mode:
                 self.active_mode = True
-            else:
-                if len(self.filtered_items) > 0:
-                    self.active_cursor = (self.active_cursor + 1) % len(self.filtered_items)
-
+                self.active_cursor = self.start_index
+            elif self.current_page_items:
+                current_relative_index = self.active_cursor - self.start_index
+                new_relative_index = (current_relative_index + 1) % len(self.current_page_items)
+                self.active_cursor = self.start_index + new_relative_index
             self.input_buffer = ""
             return True
 
         if key == Key.UP or key == Key.K:
             if not self.active_mode:
                 self.active_mode = True
-            else:
-                if len(self.filtered_items) > 0:
-                    self.active_cursor = (self.active_cursor - 1 + len(self.filtered_items)) % len(self.filtered_items)
-
+                self.active_cursor = self.start_index + len(self.current_page_items) - 1
+            elif self.current_page_items:
+                current_relative_index = self.active_cursor - self.start_index
+                new_relative_index = (current_relative_index - 1 + len(self.current_page_items)) % len(self.current_page_items)
+                self.active_cursor = self.start_index + new_relative_index
             self.input_buffer = ""
             return True
-
 
         elif key == Key.G:  # First page (Double 'g')
             if self.pending_g:
                 if self.start_index != 0:
                     self.start_index = 0
                     self.active_cursor = 0
-                    if self.active_mode:
-                        self.active_cursor = 0
                     self.pending_g = False
+                    self.need_clear = True
                     return True
                 self.pending_g = False
             else:
@@ -475,9 +478,34 @@ class ViewScreen(BaseScreen):
                 new_start = last_page_idx * available_rows
                 if self.start_index != new_start:
                     self.start_index = new_start
-                    if self.active_mode:
-                        self.active_cursor = total - 1
+                    self.active_cursor = total - 1
+                    self.need_clear = True
                     return True
+        
+        elif key == Key.L: # Next page
+            total = len(self.filtered_items)
+            if total > 0:
+                new_start = self.start_index + available_rows
+                if new_start >= total:
+                    new_start = 0 # Wrap around
+                self.start_index = new_start
+                self.active_cursor = self.start_index
+                if not self.active_mode: self.active_mode = True
+                self.need_clear = True
+                return True
+        
+        elif key == Key.H: # Previous page
+            total = len(self.filtered_items)
+            if total > 0:
+                new_start = self.start_index - available_rows
+                if new_start < 0:
+                    last_page_idx = (total - 1) // available_rows
+                    new_start = last_page_idx * available_rows
+                self.start_index = new_start
+                self.active_cursor = self.start_index
+                if not self.active_mode: self.active_mode = True
+                self.need_clear = True
+                return True
 
         elif key == Key.R:
             self.app.push_screen(SyncActionScreen(self.app, self))
@@ -488,8 +516,7 @@ class ViewScreen(BaseScreen):
         elif key == Key.S:
             self.app.push_screen(SortActionScreen(self.app, self))
             return True
-        elif key == Key.L:
-            pass
+        
         else:
             if super().handle_input(key):
                 return True

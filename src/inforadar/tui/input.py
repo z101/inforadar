@@ -21,7 +21,7 @@ def handle_winch(signum, frame):
     resize_needed = True
 
 
-def get_key() -> Optional[str]:
+def get_key(raw: bool = False) -> Optional[str]:
     """Reads a key press and decodes escape sequences. Returns None on timeout."""
     global resize_needed
 
@@ -73,7 +73,7 @@ def get_key() -> Optional[str]:
         except UnicodeDecodeError:
             ch = Key.UNKNOWN
 
-    # Handle CTRL+D (EOT) and CTRL+U (NAK)
+    # Handle CTRL+D (EOT) and other control characters
     if ch == "\x04":
         return Key.CTRL_D
     if ch == "\x15":
@@ -141,8 +141,8 @@ def get_key() -> Optional[str]:
             pass
         return Key.ESCAPE
 
-    # Convert from other keyboard layouts to English
-    if ch in LAYOUT_MAP:
+    # Convert from other keyboard layouts to English, unless raw input is requested
+    if not raw and ch in LAYOUT_MAP:
         ch = LAYOUT_MAP[ch]
 
     if ch == "\r":

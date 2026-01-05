@@ -23,6 +23,7 @@ class ItemEditorScreen(BaseScreen):
         schema: Dict[str, Any],
         item_data: Optional[Dict[str, str]],
         on_save: Callable[[Dict[str, str]], None],
+        on_close: Optional[Callable[[], None]] = None,
     ):
         super().__init__(app)
         
@@ -36,6 +37,7 @@ class ItemEditorScreen(BaseScreen):
         self.item_data = item_data.copy() if item_data else {}
         self.original_item_data = item_data.copy() if item_data else {}
         self.on_save = on_save
+        self.on_close = on_close
         self.is_new = is_new
 
         self.fields = self.schema.get("fields", [])
@@ -51,7 +53,7 @@ class ItemEditorScreen(BaseScreen):
     def _get_footer_text(self) -> Text:
         """Returns the footer text with key bindings, centered."""
         return Text.from_markup(
-            f"[[dim bold green]↑/k[/]] Up | [[dim bold green]↓/j[/]] Down | [[dim bold green]Enter[/]] Edit | [[dim bold green]Ctrl+Enter[/]] Save | [[dim bold green]Esc[/]] Cancel",
+            f"[[dim bold green]↑/k[/]] Up | [[dim bold green]↓/j[/]] Down | [[dim bold green]Enter[/]] Edit | [[dim bold green]s[/]] Save | [[dim bold green]Esc[/]] Cancel",
             justify="center",
             style="dim"
         )
@@ -79,7 +81,7 @@ class ItemEditorScreen(BaseScreen):
         elif key == Key.ENTER:
             self._edit_current_field()
             return True
-        elif key == 'ctrl_enter': # Fix: changed from Key.CTRL_ENTER to string literal
+        elif key == Key.S:
             self._save_item()
             return True
         elif key == Key.ESCAPE:
@@ -124,21 +126,28 @@ class ItemEditorScreen(BaseScreen):
             return
 
         self.on_save(self.item_data)
+        if self.on_close:
+            self.on_close()
         self.app.pop_screen()
 
     def _handle_cancel(self):
         has_changed = self.item_data != self.original_item_data
 
+        def do_pop():
+            if self.on_close:
+                self.on_close()
+            self.app.pop_screen()
+
         if self.is_new and not self.item_data:
-             self.app.pop_screen()
+             do_pop()
         elif self.is_new and self.item_data:
-            confirm_screen = ConfirmationScreen(self.app, "Discard new item?", on_confirm=self.app.pop_screen)
+            confirm_screen = ConfirmationScreen(self.app, "Discard new item?", on_confirm=do_pop)
             self.app.push_screen(confirm_screen)
         elif not self.is_new and has_changed:
-             confirm_screen = ConfirmationScreen(self.app, "Discard changes?", on_confirm=self.app.pop_screen)
+             confirm_screen = ConfirmationScreen(self.app, "Discard changes?", on_confirm=do_pop)
              self.app.push_screen(confirm_screen)
         else:
-            self.app.pop_screen()
+             do_pop()
 
     def render(self):
         console = self.app.console

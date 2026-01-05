@@ -19,11 +19,16 @@ for editing these items.
 # - required (bool, optional): Whether the field is mandatory. Defaults to True.
 CUSTOM_TYPE_SCHEMAS = {
     "sources.habr.hubs": {
-        "description": "A list of Habr hubs to track. The 'ID' is the human-readable name, and the 'Slug' is the part of the URL that identifies the hub.",
+        "description": "A list of Habr hubs to track. The 'ID' is used for fetching, and 'Name' is the display name.",
         "item_name": "Habr Hub",
         "fields": [
             {"name": "id", "label": "ID"},
-            {"name": "slug", "label": "Slug"},
+            {"name": "name", "label": "Name"},
+            {"name": "enabled", "label": "Enabled", "type": "bool", "default": True},
+            {"name": "new", "label": "New", "type": "bool", "default": False, "readonly": True},
+            {"name": "fetch_date", "label": "F Date", "readonly": True, "required": False},
+            {"name": "rating", "label": "⭐", "readonly": True, "required": False, "type": "float"},
+            {"name": "subscribers", "label": "👥", "readonly": True, "required": False, "type": "int"},
         ]
     }
 }

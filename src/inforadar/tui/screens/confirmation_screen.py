@@ -30,7 +30,7 @@ class ConfirmationScreen(BaseScreen):
 
     def _get_shortcuts_text(self) -> str:
         """Creates the styled shortcut text as a markup string."""
-        return "[[dim bold green]Enter[/dim bold green]] Yes  [[dim bold red]Esc[/dim bold red]] No"
+        return "[[bold]Enter[/bold]] Yes  [[bold]Esc[/bold]] No"
 
     def render(self):
         """Renders the confirmation panel, centered on the screen."""

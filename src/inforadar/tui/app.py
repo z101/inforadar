@@ -2,7 +2,7 @@ import sys
 import signal
 import termios
 import tty
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from rich.console import Console
 from rich.control import Control
@@ -23,12 +23,14 @@ class AppState:
     def push_screen(self, screen: "BaseScreen"):
         self.screen_stack.append(screen)
 
-    def pop_screen(self):
+    def pop_screen(self, on_after_pop=None):
         if self.screen_stack:
             screen_to_pop = self.screen_stack[-1]
             if hasattr(screen_to_pop, "on_leave"):
                 screen_to_pop.on_leave()
             self.screen_stack.pop()
+            if on_after_pop:
+                on_after_pop()
         if not self.screen_stack:
             self.running = False
 
@@ -62,19 +64,20 @@ class AppState:
                         )
 
                         if not manages_own_screen:
-                            # Use home() only in command mode dealing with typing to prevent flickering.
-                            # Otherwise use clear() to ensure no artifacts (e.g. when changing pages).
+                            # By default, clear the screen to prevent artifacts
                             use_clear = True
-                            if (
-                                hasattr(self.current_screen, "command_mode")
-                                and self.current_screen.command_mode
-                            ):
+                            
+                            # But for text input or simple cursor movement,
+                            # just move to home to prevent flickering
+                            is_input_mode = hasattr(self.current_screen, 'is_text_input_mode') and self.current_screen.is_text_input_mode
+                            is_active_mode = hasattr(self.current_screen, 'active_mode') and self.current_screen.active_mode
+                            if is_input_mode or is_active_mode:
                                 use_clear = False
-                            elif (
-                                hasattr(self.current_screen, "active_mode")
-                                and self.current_screen.active_mode
-                            ):
-                                use_clear = False
+                            
+                            # However, always force a clear if the screen explicitly requests it
+                            if hasattr(self.current_screen, "need_clear") and self.current_screen.need_clear:
+                                use_clear = True
+                                self.current_screen.need_clear = False
 
                             if use_clear:
                                 self.console.clear()
@@ -86,7 +89,12 @@ class AppState:
                         should_render = False
 
                     try:
-                        key = get_key()
+                        raw_mode = False
+                        if hasattr(self.current_screen, "is_text_input_mode"):
+                            raw_mode = self.current_screen.is_text_input_mode
+                        
+                        key = get_key(raw=raw_mode)
+
                         if key is None:
                             # Timeout - check if screen needs refresh (for animations)
                             if (

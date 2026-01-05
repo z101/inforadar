@@ -2,7 +2,7 @@ from inforadar.storage import Storage
 from inforadar.config import SettingsManager, get_db_url
 from inforadar.providers.habr import HabrProvider
 from inforadar.models import Article
-from typing import List, Optional, Callable, Any
+from typing import List, Optional, Callable, Any, Dict
 from datetime import datetime, timedelta, timezone
 import time
 import random
@@ -146,6 +146,94 @@ class CoreEngine:
         return self.storage.get_articles(
             read=read, interesting=interesting, source=source
         )
+
+    def fetch_and_merge_hubs(
+        self,
+        source_name: str = "habr",
+        on_progress: Optional[Callable] = None,
+        cancel_event: Optional[Any] = None,
+    ) -> Dict[str, int]:
+        """
+        Fetches all hubs for a given source and merges them with the existing list in settings.
+        Also removes local hubs that are no longer present in the source.
+        """
+        sources = self.settings.get("sources", {})
+        source_config = sources.get(source_name)
+
+        def _progress(data: dict):
+            if on_progress:
+                on_progress(data)
+
+        if not source_config or source_config.get("type") != "habr":
+            _progress({'message': f"Source '{source_name}' not found or is not a habr type.", 'stage': 'error'})
+            return {"added": 0, "updated": 0, "deleted": 0}
+
+        provider = HabrProvider(source_name, source_config, self.storage)
+
+        # 1. Fetch all hubs from the provider
+        fetched_hubs = provider.fetch_hubs(on_progress=_progress, cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            return {"added": 0, "updated": 0, "deleted": 0, "cancelled": 1}
+        
+        # 2. Get existing state
+        _progress({'message': "Merging hubs with existing list...", 'stage': 'merging'})
+        key = f"sources.{source_name}.hubs"
+        existing_hubs_list = self.settings.get(key, [])
+        existing_hubs_map = {hub["id"]: hub for hub in existing_hubs_list}
+        fetched_hub_ids = {hub['id'] for hub in fetched_hubs}
+
+        # 3. Identify deleted hubs
+        original_ids = set(existing_hubs_map.keys())
+        deleted_ids = original_ids - fetched_hub_ids
+        if deleted_ids:
+            deleted_names = [existing_hubs_map[id].get('name', id) for id in deleted_ids]
+            _progress({'message': f"Deleted stale hubs: [yellow]{', '.join(deleted_names)}[/yellow]", 'stage': 'log'})
+
+        # 4. Merge fetched hubs and build the final list
+        final_hubs_list = []
+        added_count = 0
+        updated_count = 0
+        fetch_timestamp = datetime.now(timezone.utc).isoformat()
+
+        for fetched_hub in fetched_hubs:
+            hub_id = fetched_hub["id"]
+            existing_hub = existing_hubs_map.get(hub_id)
+
+            if existing_hub:
+                # Update existing hub
+                existing_hub.update({
+                    "rating": fetched_hub["rating"],
+                    "subscribers": fetched_hub["subscribers"],
+                    "fetch_date": fetch_timestamp,
+                })
+                # Do not update name if it was manually set and is not empty
+                if not existing_hub.get("name"):
+                    existing_hub["name"] = fetched_hub["name"]
+                final_hubs_list.append(existing_hub)
+                updated_count += 1
+            else:
+                # Add new hub
+                new_hub = {
+                    "id": hub_id,
+                    "name": fetched_hub["name"],
+                    "enabled": True,
+                    "fetch_date": fetch_timestamp,
+                    "rating": fetched_hub["rating"],
+                    "subscribers": fetched_hub["subscribers"],
+                }
+                final_hubs_list.append(new_hub)
+                added_count += 1
+        
+        # 5. Save the final list back to settings
+        self.settings.set(key, final_hubs_list, type_hint='custom')
+
+        # 6. Report completion
+        added_str = f"[bold green]{added_count}[/bold green]" if added_count > 0 else str(added_count)
+        updated_str = f"[bold green]{updated_count}[/bold green]" if updated_count > 0 else str(updated_count)
+        deleted_str = f"[bold yellow]{len(deleted_ids)}[/bold yellow]" if deleted_ids else str(len(deleted_ids))
+        _progress({'message': f"Merge complete. Added: {added_str}, Updated: {updated_str}, Deleted: {deleted_str}.", 'stage': 'done'})
+
+        return {"added": added_count, "updated": updated_count, "deleted": len(deleted_ids)}
 
     def update_article_status(
         self,

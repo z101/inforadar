@@ -4,7 +4,7 @@ import requests
 import calendar
 from bs4 import BeautifulSoup
 import markdownify
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import List, Dict, Any, Optional, Tuple, Set, Callable
 from urllib.parse import urlparse, urlunparse
 from datetime import datetime, timezone, timedelta
 import logging
@@ -82,6 +82,105 @@ class HabrProvider:
                 break
 
         return report
+
+    def fetch_hubs(
+        self, on_progress: Optional[Callable] = None, cancel_event: Optional[Any] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetches all hubs from Habr.com/ru/hubs in a two-phase process.
+        """
+        all_hubs = []
+        
+        def _progress(data: dict):
+            if on_progress:
+                on_progress(data)
+
+        # Phase 1: Determine total pages
+        total_pages = 1
+        try:
+            url = "https://habr.com/ru/hubs/"
+            _progress({'message': "Determining number of pages...", 'stage': 'init'})
+            response = requests.get(url, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            pagination_el = soup.select_one("div.tm-pagination")
+            if pagination_el:
+                last_page_el = pagination_el.select_one("a.tm-pagination__page:last-child")
+                if last_page_el and last_page_el.text.isdigit():
+                    total_pages = int(last_page_el.text)
+        except requests.RequestException as e:
+            logger.error(f"Failed to fetch first hubs page to determine total pages: {e}")
+            _progress({'message': "Error determining total pages. Stopping.", 'stage': 'error'})
+            return []
+
+        # Phase 2: Fetch all pages
+        for page in range(1, total_pages + 1):
+            if cancel_event and cancel_event.is_set():
+                _progress({'message': "Cancelled by user.", 'stage': 'cancelled'})
+                return []
+
+            _progress({'message': f"Fetching hubs from page {page} of {total_pages}...", 'stage': 'fetching', 'current': page, 'total': total_pages})
+            url = f"https://habr.com/ru/hubs/page{page}/"
+            
+            try:
+                response = requests.get(url, headers=self.headers, timeout=10)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, "html.parser")
+                all_hubs.extend(self._parse_hubs_from_page(soup))
+                if page < total_pages:
+                    time.sleep(random.uniform(0.2, 0.5))
+
+            except requests.RequestException as e:
+                logger.error(f"Failed to fetch hubs page {page}: {e}")
+                _progress({'message': f"Error fetching page {page}. Stopping.", 'stage': 'error'})
+                break
+        
+        _progress({'message': f"Fetched a total of [bold green]{len(all_hubs)}[/bold green] hubs.", 'stage': 'done'})
+        return all_hubs
+
+    def _parse_hubs_from_page(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """Parses a list of hubs from a given BeautifulSoup object."""
+        hubs_on_page = []
+        hub_elements = soup.select("div.tm-hub")
+
+        for hub_el in hub_elements:
+            try:
+                title_el = hub_el.select_one("a.tm-hub__title")
+                if not title_el:
+                    continue
+
+                href = title_el["href"]
+                hub_id = href.strip("/").split("/")[-1]
+                name = title_el.select_one("span").text.strip()
+
+                rating_el = hub_el.select_one(".tm-hub__rating")
+                rating_text = rating_el.text.strip() if rating_el else "0"
+                rating = float(rating_text)
+
+                subscribers_el = hub_el.select_one(".tm-hub__subscribers")
+                subscribers_text = subscribers_el.text.strip() if subscribers_el else "0"
+                subscribers = self._parse_subscribers(subscribers_text)
+
+                hubs_on_page.append({
+                    "id": hub_id,
+                    "name": name,
+                    "rating": rating,
+                    "subscribers": subscribers,
+                })
+            except (AttributeError, ValueError, IndexError) as e:
+                logger.error(f"Error parsing a hub from page content: {e}")
+                continue
+        return hubs_on_page
+
+
+    def _parse_subscribers(self, s: str) -> int:
+        s = s.lower().strip()
+        if not s:
+            return 0
+        if 'k' in s:
+            return int(float(s.replace('k', '')) * 1000)
+        return int(s)
 
     def _process_hub(
         self,

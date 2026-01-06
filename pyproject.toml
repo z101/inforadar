@@ -11,7 +11,6 @@ description = "Консольное приложение для сбора и р
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "typer[all]",
     "rich",
     "sqlalchemy",
     "pyyaml",
@@ -21,6 +20,7 @@ dependencies = [
     "markdownify",
     "appdirs",
     "alembic",
+    "httpx",
 
 ]
 

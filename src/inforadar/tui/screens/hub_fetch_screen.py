@@ -2,6 +2,7 @@ import threading
 from datetime import datetime
 from typing import List, TYPE_CHECKING, Any, Optional, Callable
 import traceback
+import asyncio
 
 from rich.console import Group
 from rich.live import Live
@@ -39,19 +40,22 @@ class HubFetchScreen(BaseScreen):
             OptionalMofNCompleteColumn(),
             expand=True,
         )
-        self.main_task_id = self.progress.add_task("Press 's' to start...", total=None)
+        self.main_task_id = self.progress.add_task("Press 's' to start...", total=None, visible=True)
+
         self.logs: List[str] = []
         self.cancel_event = threading.Event()
         self.worker_thread = None
         self.lock = threading.Lock()
 
-        self.state = "init"  # "init", "running", "done"
+        self.state = "init"
         self.log_scroll_offset = 0
         self.live: Optional[Live] = None
         self.manages_own_screen = True
         self.needs_final_render = False
         self.auto_scroll_enabled = True
-        self.error_occurred = False # New flag to track errors
+        self.error_occurred = False
+        self.enrich_enabled = True
+        self.is_debug_mode = self.app.engine.settings.get("debug.enabled", False)
 
     def on_leave(self) -> None:
         if self.live:
@@ -65,10 +69,10 @@ class HubFetchScreen(BaseScreen):
 
     def _reset_to_init_state(self):
         self.progress.remove_task(self.main_task_id)
-        self.main_task_id = self.progress.add_task("Press 's' to start...", total=None)
+        self.main_task_id = self.progress.add_task("Press 's' to start...", total=None, visible=True)
         self.state = "init"
         self.log_scroll_offset = 0
-        self.error_occurred = False # Reset error flag
+        self.error_occurred = False
 
     def work(self):
         """Runs the hub fetch and merge process."""
@@ -76,49 +80,49 @@ class HubFetchScreen(BaseScreen):
         def progress_cb(progress_data: dict):
             """Callback to handle progress updates from the core engine."""
             with self.lock:
-                message = progress_data.get("message", "...")
+                message = progress_data.get("message")
                 stage = progress_data.get("stage", "log")
                 current = progress_data.get("current")
                 total = progress_data.get("total")
                 
-                # Always log the message
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                self.logs.append(f"[grey50][{timestamp}][/grey50] {message}")
+                if message:
+                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    self.logs.append(f"[grey50][{timestamp}][/grey50] {message}")
 
-                # Update progress bar based on stage
                 task = self.progress.tasks[0] if self.progress.tasks else None
                 if not task:
                     return
 
                 if stage == 'fetching':
-                    if task.total is None and total is not None:
-                        self.progress.update(self.main_task_id, total=total, description="Fetching...")
-                    self.progress.update(self.main_task_id, completed=current)
+                    if task.description != "Fetching hubs...":
+                         self.progress.update(self.main_task_id, total=total, description="Fetching hubs...")
+                    if current is not None:
+                        self.progress.update(self.main_task_id, completed=current)
+                
+                elif stage == 'enriching':
+                    if task.description != "Enriching hubs...":
+                        self.progress.update(self.main_task_id, total=total, completed=0, description="Enriching hubs...")
+                    if current is not None:
+                        self.progress.update(self.main_task_id, completed=current)
+
                 elif stage == 'merging':
-                    self.progress.update(self.main_task_id, total=None, description="Merging...")
+                    self.progress.remove_task(self.main_task_id)
+                    self.main_task_id = self.progress.add_task("Merging...", total=None, visible=True)
 
         try:
-            # The first log is now handled by start_fetch
             self.app.engine.fetch_and_merge_hubs(
+                enrich=self.enrich_enabled,
                 on_progress=progress_cb,
                 cancel_event=self.cancel_event,
             )
-
-            # The on_complete callback is now called via on_after_pop
-            # to ensure it runs in the main thread.
-            pass
-
         except Exception as e:
-            # This block is executed in the worker thread.
-            # It's critical to only modify shared data (self.logs) inside the lock
-            # and not to call any methods that might interact with the UI thread.
             with self.lock:
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 error_msg = f"[bold red]An unexpected error occurred: {str(e)}[/bold red]"
                 stack_trace = traceback.format_exc()
                 self.logs.append(f"[grey50][{timestamp}][/grey50] {error_msg}")
                 self.logs.append(f"[dim]{stack_trace}[/dim]")
-                self.error_occurred = True # Set the error flag
+                self.error_occurred = True
         finally:
             with self.lock:
                 timestamp = datetime.now().strftime("%H:%M:%S")
@@ -126,7 +130,7 @@ class HubFetchScreen(BaseScreen):
                     self.logs.append(
                         f"[grey50][{timestamp}][/grey50] [yellow]Fetch cancelled by user.[/yellow]"
                     )
-                elif self.error_occurred: # Check the new error flag
+                elif self.error_occurred:
                     self.logs.append(
                         f"[grey50][{timestamp}][/grey50] [red]Fetch completed with errors.[/red]"
                     )
@@ -174,20 +178,26 @@ class HubFetchScreen(BaseScreen):
         elif key == Key.S and self.state == "init":
             self.start_fetch()
             should_render = True
+        elif key == 'e' and self.state == "init":
+            self.enrich_enabled = not self.enrich_enabled
+            should_render = True
         
         return should_render
 
-    def _build_header_text(self) -> str:
-        return "[bold green dim]Info Radar Hub Fetch[/bold green dim]"
+    def _build_header_text(self) -> Text:
+        header_base = "[bold green dim]Info Radar Hub Fetch[/bold green dim]"
+        enrich_status = f"[dim]Enrich[/] {'[bold green]ON[/bold green]' if self.enrich_enabled else '[bold red]OFF[/bold red]'}"
+        debug_status = "[bold yellow]DEBUG[/bold yellow]" if self.is_debug_mode else ""
+        
+        parts = [header_base, enrich_status, debug_status]
+        return Text.from_markup(" | ".join(filter(None, parts)), justify="center")
 
     def _build_layout(self) -> Group:
         console_height = self.app.console.height
-        log_lines_to_show = (
-            console_height - RESERVED_LINES_FOR_UI
-            if console_height > RESERVED_LINES_FOR_UI
-            else 1
-        )
+        log_lines_to_show = max(1, console_height - RESERVED_LINES_FOR_UI)
+
         header = self._build_header_text()
+
         with self.lock:
             end_index = len(self.logs) - self.log_scroll_offset
             start_index = max(0, end_index - log_lines_to_show)
@@ -201,26 +211,20 @@ class HubFetchScreen(BaseScreen):
             title="Logs",
             border_style="green",
             height=log_lines_to_show + 2,
-            expand=True,
         )
 
         footer_text = ""
         if self.state == "init":
-            footer_text = "[[bold white]s[/bold white]] Start [[bold white]Esc, q[/bold white]] Back"
+            footer_text = "[[bold white]s[/bold white]] Start [[bold white]e[/bold white]] Enrich [[bold white]Esc, q[/bold white]] Back"
         elif self.state == "running":
             footer_text = "[[bold white]Esc, q[/bold white]] Cancel"
-        elif self.state == "done":
+        else: # "done" or other states
             footer_text = "[[bold white]Esc, q[/bold white]] Back"
         footer = Text.from_markup(footer_text, style="dim", justify="center")
         
-        return Group(
-            Text.from_markup(header, justify="center"),
-            "",
-            self.progress,
-            logs_panel,
-            "",
-            footer,
-        )
+        layout_items = [header, "", self.progress, logs_panel, "", footer]
+
+        return Group(*layout_items)
 
     def render(self) -> None:
         if self.needs_final_render:

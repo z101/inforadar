@@ -72,21 +72,59 @@ class SettingsManager:
 
     def load_settings(self):
         """
-        Loads all settings from the 'settings' table into a nested dictionary.
+        Loads all settings, starting with the database, then overriding with
+        settings from user_config.yml for user-specific configurations.
         """
         log.info("Loading settings from database...")
         self._settings = {}
         try:
             with self._session_factory() as session:
                 all_settings = session.query(Setting).all()
-
                 for setting in all_settings:
                     self._set_nested_key(self._settings, setting.key, setting)
-            log.info(f"Loaded {len(all_settings)} settings.")
+            log.info(f"Loaded {len(all_settings)} settings from database.")
         except Exception as e:
-            # This can happen if DB is not initialized yet.
-            # It's safe to proceed with empty settings.
             log.warning(f"Could not load settings from database: {e}. Using defaults.")
+
+        # Load user settings from YAML and merge them
+        config_path = Path(_dirs.user_config_dir) / "user_config.yml"
+        if config_path.is_file():
+            log.info(f"Loading user settings from {config_path}...")
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    user_config = yaml.safe_load(f)
+                if user_config and isinstance(user_config, dict):
+                    # Exclude 'debug' from user config merge, as it's now db-only
+                    if 'debug' in user_config:
+                        del user_config['debug']
+                    
+                    self._settings = self._deep_merge(self._settings, user_config)
+                    log.info("Successfully merged user settings.")
+            except Exception as e:
+                log.error(f"Failed to read or merge user config at {config_path}: {e}")
+        
+        # Ensure default debug settings exist in DB if not present
+        self._ensure_default_setting("debug.enabled", "false", "boolean", "Enable debug mode")
+        self._ensure_default_setting("debug.hub_limit", "10", "integer", "Limit number of hubs to fetch in debug mode")
+        
+        # Ensure default fetch concurrency setting
+        self._ensure_default_setting("fetch.concurrency", "10", "integer", "Concurrency limit for fetch operations")
+
+    def _ensure_default_setting(self, key: str, value: str, type_hint: str, description: str):
+        """Ensures a setting exists in the database with a default value."""
+        if self.get(key) is None:
+            self.set(key, value, type_hint=type_hint, description=description)
+
+    def _deep_merge(self, source: dict, destination: dict) -> dict:
+        """
+        Deeply merges two dictionaries. `destination` values overwrite `source` values.
+        """
+        for key, value in destination.items():
+            if isinstance(value, dict) and key in source and isinstance(source[key], dict):
+                source[key] = self._deep_merge(source[key], value)
+            else:
+                source[key] = value
+        return source
 
     def _set_nested_key(self, data: dict, key: str, setting: Setting):
         """

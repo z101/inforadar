@@ -26,12 +26,45 @@ class HabrHubsEditorScreen(CustomListEditorScreen):
         return f"{item.get('id', '')} {item.get('name', '')}"
 
     def get_columns(self, width: int) -> List[Dict[str, Any]]:
+        # --- Dynamic Column Width Calculation ---
+        headers = {
+            "id": "ID", "last_article_date": "Last", "articles": "📝",
+            "rating": "⭐", "subscribers": "👥"
+        }
+        max_widths = {key: len(value) for key, value in headers.items()}
+        max_widths["index"] = len("#")
+
+        if hasattr(self, 'filtered_items'):
+            for item in self.filtered_items:
+                # ID
+                max_widths["id"] = max(max_widths["id"], len(str(item.get("id", ""))))
+                # Last Date (formatted as dd-mm-yy)
+                max_widths["last_article_date"] = max(max_widths["last_article_date"], 8)
+                # Articles
+                max_widths["articles"] = max(max_widths["articles"], len(str(item.get("articles", ""))))
+                # Rating
+                rating_val = item.get("rating")
+                max_widths["rating"] = max(max_widths["rating"], len(f"{rating_val:.2f}" if rating_val is not None else ""))
+                # Subscribers
+                subs = item.get("subscribers")
+                if subs is None: subs_len = 0
+                elif subs >= 1000: subs_len = len(f"{subs/1000:.1f}k".replace(".0k", "k"))
+                else: subs_len = len(str(subs))
+                max_widths["subscribers"] = max(max_widths["subscribers"], subs_len)
+
+        # Add padding
+        for key in max_widths:
+            max_widths[key] += 1
+        # --- End Calculation ---
+
         columns = [
-            {"name": "index", "header": "#", "justify": "right", "no_wrap": True},
-            {"name": "id", "header": "ID", "no_wrap": True, "overflow": "ellipsis", "width": 25},
+            {"name": "index", "header": "#", "justify": "right", "width": max_widths["index"]},
+            {"name": "id", "header": headers["id"], "width": max_widths["id"]},
             {"name": "name", "header": "Name", "ratio": 1, "no_wrap": True, "overflow": "ellipsis"},
-            {"name": "rating", "header": "⭐", "justify": "right", "no_wrap": True},
-            {"name": "subscribers", "header": "👥", "justify": "right", "no_wrap": True},
+            {"name": "last_article_date", "header": headers["last_article_date"], "width": max_widths["last_article_date"]},
+            {"name": "articles", "header": headers["articles"], "justify": "right", "width": max_widths["articles"]},
+            {"name": "rating", "header": headers["rating"], "justify": "right", "width": max_widths["rating"]},
+            {"name": "subscribers", "header": headers["subscribers"], "justify": "right", "width": max_widths["subscribers"]},
         ]
 
         sort_field, direction = self.current_sort.rsplit("_", 1)
@@ -48,6 +81,19 @@ class HabrHubsEditorScreen(CustomListEditorScreen):
         row_values = [f"[dim green]{index}[/dim green]"]
         row_values.append(item.get("id", ""))
         row_values.append(item.get("name", ""))
+        
+        last_date_str = item.get("last_article_date")
+        if last_date_str:
+            try:
+                dt = datetime.fromisoformat(last_date_str.replace('Z', '+00:00'))
+                row_values.append(dt.strftime("%d-%m-%y"))
+            except ValueError:
+                row_values.append("")
+        else:
+            row_values.append("")
+
+        articles_count = item.get("articles")
+        row_values.append(str(articles_count) if articles_count is not None else "")
         
         enabled = item.get("enabled", True)
         rating = item.get("rating")
@@ -122,6 +168,14 @@ class HabrHubsEditorScreen(CustomListEditorScreen):
             self.current_sort = "name_asc" if self.current_sort == "name_desc" else "name_desc"
             self.apply_current_sort()
             return True
+        elif key == 'l':
+            self.current_sort = "last_article_date_asc" if self.current_sort == "last_article_date_desc" else "last_article_date_desc"
+            self.apply_current_sort()
+            return True
+        elif key == 'c':
+            self.current_sort = "articles_asc" if self.current_sort == "articles_desc" else "articles_desc"
+            self.apply_current_sort()
+            return True
 
         return super().handle_input(key)
 
@@ -135,6 +189,10 @@ class HabrHubsEditorScreen(CustomListEditorScreen):
             "subscribers_asc": (lambda i: i.get("subscribers") or 0, False),
             "name_asc": (lambda i: i.get("name", "").lower(), False),
             "name_desc": (lambda i: i.get("name", "").lower(), True),
+            "last_article_date_asc": (lambda i: i.get("last_article_date") or "", False),
+            "last_article_date_desc": (lambda i: i.get("last_article_date") or "", True),
+            "articles_asc": (lambda i: i.get("articles") or 0, False),
+            "articles_desc": (lambda i: i.get("articles") or 0, True),
         }
 
         if self.current_sort in sort_key_map:
@@ -161,7 +219,7 @@ class HabrHubsEditorScreen(CustomListEditorScreen):
         
 
     def _get_shortcuts_text(self) -> str:
-        return " | [[dim green bold]?[/] Help"
+        return " | [[dim green bold]?[/] Help | [r] Rating | [s] Subs | [n] Name | [l] Last | [c] Count"
 
     def on_select(self, item: Dict[str, str]):
         def on_name_save(new_name: str):

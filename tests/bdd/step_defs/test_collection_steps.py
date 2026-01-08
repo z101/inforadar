@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from pathlib import Path
 from datetime import datetime, timezone
 
-from inforadar.providers.habr import HabrProvider
+from inforadar.sources.habr import HabrSource
 from inforadar.storage import Storage
 from inforadar.models import Article
 
@@ -53,7 +53,7 @@ def mock_hub_page(requests_mock):
 @when('Пользователь запускает сбор данных', target_fixture="collected_report")
 def run_data_collection(mock_storage, mock_config):
     # We need to mock requests to return articles to satisfy the test expectation
-    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
+    provider = HabrSource(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     return provider.fetch()
 
 @then(parsers.parse('Должно быть собрано {count:d} новые статьи'))

@@ -339,15 +339,10 @@ class FetchScreen(BaseScreen):
         """Builds header text matching the main screen's styling."""
         parts = ["[bold green dim]Info Radar Fetch[/bold green dim]"]
 
-        sources_config = self.app.engine.settings.get("sources", {})
-        cutoff_dates = [
-            cfg.get("initial_fetch_date", "").split()[0]
-            for cfg in sources_config.values()
-            if "initial_fetch_date" in cfg
-        ]
-        if cutoff_dates:
+        fetch_cutoff = self.app.engine.settings.get("fetch_cutoff")
+        if fetch_cutoff:
             parts.append(
-                f"[dim]Cutoff[/dim] [bold white]{min(cutoff_dates)}[/bold white]"
+                f"[dim]Cutoff[/dim] [bold white]{fetch_cutoff}[/bold white]"
             )
 
         # --- Auto-Scroll and Scroll indicators ---

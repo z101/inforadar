@@ -25,5 +25,5 @@ def requests_mock(request):
 @pytest.fixture
 def mock_feedparser():
     """Мок для feedparser."""
-    with patch('inforadar.providers.habr.feedparser') as mock:
+    with patch('inforadar.sources.habr.feedparser') as mock:
         yield mock

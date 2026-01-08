@@ -391,7 +391,7 @@ class ArticlesViewScreen(ViewScreen):
         )
 
         if self.show_details:
-            cols.append({"header": "Source", "justify": "left", "no_wrap": True})
+            cols.append({"header": "Src", "justify": "left", "no_wrap": True})
             cols.append({"header": "Topic", "justify": "left", "no_wrap": True})
             cols.append({"header": "Date", "justify": "center", "no_wrap": True})
 

@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from inforadar.providers.habr import HabrProvider
+from inforadar.sources.habr import HabrSource
 from inforadar.models import Article
 
 FIXTURES_PATH = Path(__file__).parent / "fixtures"
@@ -17,7 +17,7 @@ def mock_requests_get(url, headers=None):
     mock_response.text = (FIXTURES_PATH / "habr_hub_page.html").read_text()
     return mock_response
 
-@patch('inforadar.providers.habr.requests.get', side_effect=mock_requests_get)
+@patch('inforadar.sources.habr.requests.get', side_effect=mock_requests_get)
 def test_cutoff_date_filters_old_articles(mock_requests):
     """Tests that cutoff_date filters out old articles."""
     
@@ -33,7 +33,7 @@ def test_cutoff_date_filters_old_articles(mock_requests):
         }
     }
     
-    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
+    provider = HabrSource(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     
     # We need to ensure the mocked HTML contains articles older than 2025-01-01 if we want to test filtering?
     # Or cleaner: mock _fetch_page_items to return specific objects with dates.

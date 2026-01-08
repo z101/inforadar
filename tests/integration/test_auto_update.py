@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-from inforadar.providers.habr import HabrProvider
+from inforadar.sources.habr import HabrSource
 
 FIXTURES_PATH = Path(__file__).parent / "fixtures"
 
@@ -15,7 +15,7 @@ def mock_requests_get(url, headers=None):
     mock_response.text = "<html><body></body></html>"
     return mock_response
 
-@patch('inforadar.providers.habr.requests.get', side_effect=mock_requests_get)
+@patch('inforadar.sources.habr.requests.get', side_effect=mock_requests_get)
 def test_fetch_respected_window_stop(mock_requests):
     """
     Tests that fetch stops scanning if we passed cutoff/window conditions.

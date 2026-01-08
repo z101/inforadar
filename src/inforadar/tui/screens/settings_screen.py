@@ -23,7 +23,10 @@ class SettingsScreen(ViewScreen):
     def __init__(self, app: "AppState"):
         """Initialise the screen."""
         super().__init__(app, "[green dim bold]Info Radar Settings[/green dim bold]")
+        self.index_column_width = 0
         self.name_column_width = 0
+        self.current_sort = "name_asc"
+        self.error_message = "" # Added this line
         self.refresh_data()
 
     def _flatten_settings(self, settings: Dict[str, Any], prefix: str = "") -> List[Tuple[str, Any, str]]:
@@ -61,17 +64,32 @@ class SettingsScreen(ViewScreen):
 
         if self.items:
             max_key_len = max(len(key) for key, _, _ in self.items)
-            self.name_column_width = max_key_len + 2  # Add padding
+            self.name_column_width = max_key_len + 1  # Minimal padding
+            
+            # Calculate index width based on total items count
+            self.index_column_width = len(str(len(self.items))) + 1
         else:
             self.name_column_width = 20  # Default width
+            self.index_column_width = 3
 
+        self.apply_current_sort()
+
+    def apply_current_sort(self):
+        """Apply the current sort order."""
+        if self.current_sort == "name_asc":
+            self.sort_key = lambda item: item[0]
+            self.sort_reverse = False
+        elif self.current_sort == "name_desc":
+            self.sort_key = lambda item: item[0]
+            self.sort_reverse = True
+        
         self.apply_filter_and_sort()
 
     def get_columns(self, width: int) -> List[Dict[str, Any]]:
         """Return the column definitions for the settings table."""
         return [
-            {"header": "#", "justify": "right", "no_wrap": True},
-            {"header": "Name", "width": self.name_column_width, "no_wrap": True},
+            {"header": "#", "justify": "right", "width": self.index_column_width, "no_wrap": True},
+            {"header": "Name" + (" ↓" if self.current_sort == "name_desc" else " ↑"), "width": self.name_column_width, "no_wrap": True},
             {"header": "Value", "ratio": 1, "no_wrap": True, "overflow": "ellipsis"},
         ]
 
@@ -79,7 +97,7 @@ class SettingsScreen(ViewScreen):
         """Render a single setting item into a row."""
         key, value, setting_type = item
         index_str = f"[green dim]{index}[/dim green]"
-        key_str = f"[green]{key}[/green]"
+        key_str = f"{key}"
         
         value_str = str(value)
 
@@ -90,15 +108,15 @@ class SettingsScreen(ViewScreen):
                 # Format as ID: Slug, ...
                 schema = CUSTOM_TYPE_SCHEMAS.get(key)
                 if schema and len(schema['fields']) >= 2:
-                    id_field = schema['fields'][0]['name']
-                    name_field = schema['fields'][1]['name']
+                    id_field = schema["fields"][0]["name"]
+                    name_field = schema["fields"][1]["name"]
                     value_str = ", ".join([f"{h.get(id_field, '')}: {h.get(name_field, '')}" for h in items])
                 else:
                     value_str = f"[{len(items)} item(s)]"
             elif isinstance(items, list):
                 value_str = "[No items]"
 
-        return [index_str, key_str, value_str], ""
+        return [index_str, key_str, f"[dim]{value_str}[/dim]"], ""
 
 
     def get_item_for_filter(self, item: Tuple[str, Any, str]) -> str:
@@ -108,6 +126,7 @@ class SettingsScreen(ViewScreen):
     def on_select(self, item: Tuple[str, Any, str]):
         """Handle setting selection - open appropriate editor based on type."""
         key, value, setting_type = item
+        self.error_message = "" # Clear error message on new selection
 
         # Special case for Habr Hubs to use the specialized editor
         if key == 'sources.habr.hubs':
@@ -132,7 +151,7 @@ class SettingsScreen(ViewScreen):
                  on_save=lambda new_value: self._save_setting(key, new_value, setting_type)
              )
              self.app.push_screen(editor)
-        elif setting_type in ['string', 'integer', 'date', 'boolean', 'json']:
+        elif setting_type in ['string', 'integer', 'date', 'datetime', 'boolean', 'json']:
             # Open simple editor for basic types (including json, which is now handled as a string for editing)
             editor = SimpleSettingEditor(
                 app=self.app,
@@ -156,7 +175,7 @@ class SettingsScreen(ViewScreen):
         elif setting_type == 'custom':
             # Use the new generic CustomListEditorScreen
             if key not in CUSTOM_TYPE_SCHEMAS:
-                self.app.show_toast(f"No schema for '{key}'", "error")
+                self.error_message = f"No schema for '{key}'"
                 return
 
             editor = CustomListEditorScreen(
@@ -169,17 +188,41 @@ class SettingsScreen(ViewScreen):
             self.app.push_screen(editor)
         else:
             # Fallback for any other unknown types
-            self.app.show_toast(f"No editor for type '{setting_type}'", "warning")
-
+            self.error_message = f"No editor for type '{setting_type}'"
 
 
 
     def handle_input(self, key: str) -> bool:
-        """Handle input, including Enter to select when only one item is filtered."""
+        """Handle input."""
+        if self.command_mode or self.filter_mode:
+            return super().handle_input(key)
+
+        if key == Key.ESCAPE:
+            # If filter is active (but not in filter mode), clear it first
+            if self.filter_text or self.final_filter_text:
+                self.filter_text = ""
+                self.final_filter_text = ""
+                self.apply_filter_and_sort()
+                self.save_state()
+                return True
+            
+            # If no filter, pop screen
+            self.app.pop_screen()
+            return True
+
         if key == Key.ENTER and len(self.filtered_items) == 1:
             # If only one item is filtered, select it directly
             self.on_select(self.filtered_items[0])
             return True
+
+        if key == Key.N:
+            if self.current_sort == "name_asc":
+                self.current_sort = "name_desc"
+            else:
+                self.current_sort = "name_asc"
+            self.apply_current_sort()
+            return True
+
         return super().handle_input(key)
 
     def _get_setting_description(self, key: str) -> str:

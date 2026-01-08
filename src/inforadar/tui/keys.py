@@ -25,6 +25,7 @@ class Key:
     D = "d"
     V = "v"
     C = "c"
+    N = "n"
     B = "b"
     # Command Line Keys
     CTRL_B = "ctrl_b"

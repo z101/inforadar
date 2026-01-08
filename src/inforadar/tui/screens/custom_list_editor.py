@@ -275,7 +275,7 @@ class CustomListEditorScreen(ViewScreen):
             info_status = ""
             if self.active_mode:
                 visible_row = self.active_cursor - self.start_index + 1
-                info_status = f" | Active [dim green]{visible_row}[/dim green]"
+                # info_status = f" | Active [dim green]{visible_row}[/dim green]" <-- Removed per request
             elif self.input_buffer:
                 info_status = f" | Goto: {self.input_buffer}"
 

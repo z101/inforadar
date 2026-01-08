@@ -79,27 +79,27 @@ class HabrHubsEditorScreen(CustomListEditorScreen):
 
     def render_row(self, item: Dict[str, Any], index: int) -> tuple[list[str], str]:
         row_values = [f"[dim green]{index}[/dim green]"]
-        row_values.append(item.get("id", ""))
+        row_values.append(f"[dim]{item.get('id', '')}[/dim]")
         row_values.append(item.get("name", ""))
         
         last_date_str = item.get("last_article_date")
         if last_date_str:
             try:
                 dt = datetime.fromisoformat(last_date_str.replace('Z', '+00:00'))
-                row_values.append(dt.strftime("%d-%m-%y"))
+                row_values.append(f"[dim]{dt.strftime('%d-%m-%y')}[/dim]")
             except ValueError:
                 row_values.append("")
         else:
             row_values.append("")
 
         articles_count = item.get("articles")
-        row_values.append(str(articles_count) if articles_count is not None else "")
+        row_values.append(f"[dim]{articles_count}[/dim]" if articles_count is not None else "")
         
         enabled = item.get("enabled", True)
         rating = item.get("rating")
         subs = item.get("subscribers")
 
-        row_values.append(f"{rating:.2f}" if rating is not None else "")
+        row_values.append(f"[dim]{rating:.2f}[/dim]" if rating is not None else "")
         
         if subs is None:
             subs_str = ""
@@ -107,7 +107,7 @@ class HabrHubsEditorScreen(CustomListEditorScreen):
             subs_str = f"{subs/1000:.1f}k".replace(".0k", "k")
         else:
             subs_str = str(subs)
-        row_values.append(subs_str)
+        row_values.append(f"[dim]{subs_str}[/dim]")
 
         style = ""
         if not enabled:

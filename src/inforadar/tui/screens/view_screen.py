@@ -41,8 +41,9 @@ class ViewScreen(BaseScreen):
         self.pending_g = False
 
         # Cursor / Active Mode State
-        self.active_mode = False
+        self.active_mode = True
         self.active_cursor = 0  # Absolute index in filtered_items
+        self.cursor_visible = True
 
         # Command Line Support
         self.command_mode = False
@@ -140,7 +141,7 @@ class ViewScreen(BaseScreen):
 
         # Reset to start
         self.start_index = 0
-        self.active_mode = False
+        self.active_mode = True
         self.active_cursor = 0
 
     def render_row(self, item: Any, index: int) -> Tuple[List[str], str]:
@@ -171,10 +172,8 @@ class ViewScreen(BaseScreen):
 
         # Header
         header_text = self.title
-        if self.final_filter_text:
-            header_text += f" [white]|[/white] [yellow]{escape(self.final_filter_text)}[/yellow]"
-        elif self.filter_text:
-            header_text += " [white]|[/white] [yellow]FILTERED[/yellow]"
+        if self.filter_text:
+            header_text += f" [white]|[/white] [dim]Filter[/] [yellow]{escape(self.filter_text)}[/]"
 
         console.print(Text.from_markup(header_text), justify="center")
 
@@ -209,7 +208,7 @@ class ViewScreen(BaseScreen):
             abs_index = self.start_index + i
 
             style = row_style
-            if self.active_mode and abs_index == self.active_cursor:
+            if self.active_mode and abs_index == self.active_cursor and self.cursor_visible:
                 style = "reverse green"
             elif (
                 not self.active_mode
@@ -267,11 +266,11 @@ class ViewScreen(BaseScreen):
             console.print(footer_table)
 
         else:
-            filter_status = " [FILTERED]" if self.filter_text or self.final_filter_text else ""
+            filter_status = ""
             info_status = ""
             if self.active_mode:
                 visible_row = self.active_cursor - self.start_index + 1
-                info_status = f" | Active [green dim]{visible_row}[/green dim]"
+                # info_status = f" | Active [green dim]{visible_row}[/green dim]"  <-- Removed per request
             elif self.input_buffer:
                 info_status = f" | Goto: {self.input_buffer}"
 
@@ -368,7 +367,7 @@ class ViewScreen(BaseScreen):
 
         if key == Key.ESCAPE:
             if self.active_mode:
-                self.active_mode = False
+                # self.active_mode = False  <-- Removed: Active mode is now default
                 self.input_buffer = ""
                 return True
             if self.filter_text or self.final_filter_text:
@@ -390,13 +389,18 @@ class ViewScreen(BaseScreen):
                 try:
                     row_num = int(new_buffer)
                     if 1 <= row_num <= len(self.current_page_items):
-                        self.input_buffer = new_buffer
+                        self.input_buffer = ""  # Clear buffer after successful activation
                         self.active_mode = True
+                        self.cursor_visible = True
                         self.active_cursor = self.start_index + (row_num - 1)
+                        return True
+                    else:
+                        # Number is out of range, don't update buffer
                         return True
                 except ValueError:
                     pass
 
+            # Fallback: allow building buffer if within available rows
             if int(new_buffer) <= available_rows:
                 self.input_buffer = new_buffer
             return True
@@ -409,6 +413,7 @@ class ViewScreen(BaseScreen):
                         row_num = int(self.input_buffer)
                         if 1 <= row_num <= len(self.current_page_items):
                             self.active_mode = True
+                            self.cursor_visible = True
                             self.active_cursor = self.start_index + (row_num - 1)
                     except ValueError:
                         pass
@@ -437,6 +442,7 @@ class ViewScreen(BaseScreen):
 
         # J/K and Arrow keys for cursor movement (activates active_mode)
         if key == Key.DOWN or key == Key.J:
+            self.cursor_visible = True
             if not self.active_mode:
                 self.active_mode = True
                 self.active_cursor = self.start_index
@@ -448,6 +454,7 @@ class ViewScreen(BaseScreen):
             return True
 
         if key == Key.UP or key == Key.K:
+            self.cursor_visible = True
             if not self.active_mode:
                 self.active_mode = True
                 self.active_cursor = self.start_index + len(self.current_page_items) - 1
@@ -485,6 +492,9 @@ class ViewScreen(BaseScreen):
         elif key == Key.L: # Next page
             total = len(self.filtered_items)
             if total > 0:
+                total_pages = math.ceil(total / available_rows) if available_rows > 0 else 1
+                if total_pages <= 1:
+                    return False  # Disabled when only one page
                 new_start = self.start_index + available_rows
                 if new_start >= total:
                     new_start = 0 # Wrap around
@@ -497,6 +507,9 @@ class ViewScreen(BaseScreen):
         elif key == Key.H: # Previous page
             total = len(self.filtered_items)
             if total > 0:
+                total_pages = math.ceil(total / available_rows) if available_rows > 0 else 1
+                if total_pages <= 1:
+                    return False  # Disabled when only one page
                 new_start = self.start_index - available_rows
                 if new_start < 0:
                     last_page_idx = (total - 1) // available_rows
@@ -516,6 +529,10 @@ class ViewScreen(BaseScreen):
         elif key == Key.S:
             self.app.push_screen(SortActionScreen(self.app, self))
             return True
+        
+        elif key == Key.C:
+             self.cursor_visible = not self.cursor_visible
+             return True
         
         else:
             if super().handle_input(key):

@@ -1,6 +1,6 @@
 from inforadar.storage import Storage
 from inforadar.config import SettingsManager, get_db_url
-from inforadar.providers.habr import HabrProvider
+from inforadar.sources.habr import HabrSource
 from inforadar.models import Article
 from typing import List, Optional, Callable, Any, Dict, Tuple
 from datetime import datetime, timedelta, timezone
@@ -72,176 +72,16 @@ class CoreEngine:
             read=read, interesting=interesting, source=source
         )
 
-    def fetch_and_merge_hubs(
-        self,
-        source_name: str = "habr",
-        enrich: bool = True,
-        on_progress: Optional[Callable] = None,
-        cancel_event: Optional[Any] = None,
-    ) -> Dict[str, int]:
-        """
-        Fetches hubs for a given source, optionally enriches them,
-        and merges them with the existing list in settings.
-        In debug mode, this process is limited and non-destructive.
-        """
+    def get_provider(self, source_name: str) -> Optional[Any]:
+        """Returns an initialized provider instance for the given source name."""
         sources = self.settings.get("sources", {})
         source_config = sources.get(source_name)
-        is_debug = self.settings.get("debug.enabled", False)
-
-        def _progress(data: dict):
-            if on_progress:
-                on_progress(data)
-
+        
         if not source_config or source_config.get("type") != "habr":
-            _progress({'message': f"Source '{source_name}' not found or is not a habr type.", 'stage': 'error'})
-            return {"added": 0, "updated": 0, "deleted": 0}
+            return None
 
-        # Inject concurrency setting into config
-        concurrency = self.settings.get("fetch.concurrency", 10)
-        source_config['concurrency'] = concurrency
+        return HabrSource(source_name, source_config, self.storage)
 
-        provider = HabrProvider(source_name, source_config, self.storage)
-
-        # 1. Fetch hubs from the provider, respecting debug limit
-        hub_limit = self.settings.get("debug.hub_limit", 10) if is_debug else None
-        fetched_hubs = provider.fetch_hubs(on_progress=_progress, cancel_event=cancel_event, hub_limit=hub_limit)
-        
-        if cancel_event and cancel_event.is_set():
-            return {"added": 0, "updated": 0, "deleted": 0, "cancelled": 1}
-
-        # 2. Enrich hubs if requested
-        if enrich and fetched_hubs:
-            _progress({'message': "Starting hub enrichment...", 'stage': 'enriching', 'current': 0, 'total': len(fetched_hubs)})
-            try:
-                enriched_hubs = asyncio.run(
-                    provider.enrich_hubs(fetched_hubs, on_progress=_progress, cancel_event=cancel_event)
-                )
-                fetched_hubs = enriched_hubs
-            except Exception as e:
-                logger.error(f"Hub enrichment failed: {e}", exc_info=True)
-                _progress({'message': f"[red]Hub enrichment failed: {e}[/red]", 'stage': 'error'})
-
-        if cancel_event and cancel_event.is_set():
-            return {"added": 0, "updated": 0, "deleted": 0, "cancelled": 1}
-
-        # 3. Merge hubs
-        _progress({'message': "Merging hubs with existing list...", 'stage': 'merging'})
-        key = f"sources.{source_name}.hubs"
-        existing_hubs_list = self.settings.get(key, [])
-        
-        if is_debug:
-            # Safe merge for debug mode: only add or update, never delete
-            final_hubs_list, stats = self._safe_merge_hubs(existing_hubs_list, fetched_hubs)
-        else:
-            # Full merge for normal mode: add, update, and delete
-            final_hubs_list, stats = self._full_merge_hubs(existing_hubs_list, fetched_hubs)
-
-        # 4. Save the final list back to settings
-        self.settings.set(key, final_hubs_list, type_hint='custom')
-
-        # 5. Report completion
-        added_str = f"[bold green]{stats['added']}[/bold green]" if stats['added'] > 0 else str(stats['added'])
-        updated_str = f"[bold green]{stats['updated']}[/bold green]" if stats['updated'] > 0 else str(stats['updated'])
-        deleted_str = f"[bold yellow]{stats['deleted']}[/bold yellow]" if stats['deleted'] > 0 else str(stats['deleted'])
-        _progress({'message': f"Merge complete. Added: {added_str}, Updated: {updated_str}, Deleted: {deleted_str}.", 'stage': 'done'})
-
-        return stats
-
-    def _safe_merge_hubs(self, existing_hubs: List[Dict], fetched_hubs: List[Dict]) -> Tuple[List[Dict], Dict[str, int]]:
-        """
-        Merges hubs in a non-destructive way. Only adds new hubs or updates existing ones.
-        Never deletes. Returns the modified list and stats.
-        """
-        stats = {"added": 0, "updated": 0, "deleted": 0}
-        final_hubs = existing_hubs[:]  # Work on a copy
-        existing_hubs_map = {hub["id"]: hub for hub in final_hubs}
-        fetch_timestamp = datetime.now(timezone.utc).isoformat()
-
-        for fetched_hub in fetched_hubs:
-            hub_id = fetched_hub["id"]
-            existing_hub = existing_hubs_map.get(hub_id)
-
-            update_data = {
-                "fetch_date": fetch_timestamp,
-                "rating": fetched_hub.get("rating"),
-                "subscribers": fetched_hub.get("subscribers"),
-            }
-            if fetched_hub.get("articles") is not None:
-                update_data["articles"] = fetched_hub.get("articles")
-            if fetched_hub.get("last_article_date") is not None:
-                update_data["last_article_date"] = fetched_hub.get("last_article_date")
-
-            if existing_hub:
-                existing_hub.update(update_data)
-                if not existing_hub.get("name"):
-                    existing_hub["name"] = fetched_hub["name"]
-                stats["updated"] += 1
-            else:
-                new_hub = {
-                    "id": hub_id,
-                    "name": fetched_hub.get("name"),
-                    "enabled": True,
-                    **update_data,
-                }
-                final_hubs.append(new_hub)
-                stats["added"] += 1
-        
-        return final_hubs, stats
-
-    def _full_merge_hubs(self, existing_hubs: List[Dict], fetched_hubs: List[Dict]) -> Tuple[List[Dict], Dict[str, int]]:
-        """
-        Performs a full merge, including adding, updating, and deleting hubs.
-        Returns the new list and stats.
-        """
-        final_hubs = []
-        stats = {"added": 0, "updated": 0, "deleted": 0}
-        
-        existing_hubs_map = {hub["id"]: hub for hub in existing_hubs}
-        fetched_hub_ids = {hub['id'] for hub in fetched_hubs}
-        
-        # Calculate deleted hubs
-        deleted_ids = set(existing_hubs_map.keys()) - fetched_hub_ids
-        stats["deleted"] = len(deleted_ids)
-        
-        fetch_timestamp = datetime.now(timezone.utc).isoformat()
-
-        for fetched_hub in fetched_hubs:
-            hub_id = fetched_hub["id"]
-            existing_hub = existing_hubs_map.get(hub_id)
-
-            if existing_hub:
-                # Update existing hub
-                update_data = {
-                    "rating": fetched_hub.get("rating"),
-                    "subscribers": fetched_hub.get("subscribers"),
-                    "fetch_date": fetch_timestamp,
-                }
-                if fetched_hub.get("articles") is not None:
-                    update_data["articles"] = fetched_hub.get("articles")
-                if fetched_hub.get("last_article_date") is not None:
-                    update_data["last_article_date"] = fetched_hub.get("last_article_date")
-                
-                existing_hub.update(update_data)
-                if not existing_hub.get("name"):
-                    existing_hub["name"] = fetched_hub["name"]
-                final_hubs.append(existing_hub)
-                stats["updated"] += 1
-            else:
-                # Add new hub
-                new_hub = {
-                    "id": hub_id,
-                    "name": fetched_hub.get("name"),
-                    "enabled": True,
-                    "fetch_date": fetch_timestamp,
-                    "rating": fetched_hub.get("rating"),
-                    "subscribers": fetched_hub.get("subscribers"),
-                    "articles": fetched_hub.get("articles"),
-                    "last_article_date": fetched_hub.get("last_article_date"),
-                }
-                final_hubs.append(new_hub)
-                stats["added"] += 1
-                
-        return final_hubs, stats
 
 
     def update_article_status(
@@ -270,8 +110,8 @@ class CoreEngine:
         print(f"Refreshing metadata for {len(articles)} articles...")
         updated_count = 0
 
-        # Cache providers
-        providers = {}
+        # Cache source instances
+        source_instances = {}
 
         for i, article in enumerate(articles, 1):
             print(f"  [{i}/{len(articles)}] {article.title[:50]}...")
@@ -279,21 +119,21 @@ class CoreEngine:
             if not article.source:
                 continue
 
-            if article.source not in providers:
+            if article.source not in source_instances:
                 source_config = self.settings.get("sources", {}).get(article.source)
                 if source_config and source_config.get("type") == "habr":
-                    providers[article.source] = HabrProvider(
+                    source_instances[article.source] = HabrSource(
                         article.source, source_config, self.storage
                     )
                 else:
-                    providers[article.source] = None
+                    source_instances[article.source] = None
 
-            provider = providers[article.source]
-            if not provider:
+            source_instance = source_instances[article.source]
+            if not source_instance:
                 continue
 
             time.sleep(random.uniform(0.1, 0.5))  # Be nice to the server
-            extra_data = provider._enrich_article_data(article.link)
+            extra_data = source_instance._enrich_article_data(article.link)
             if self.storage.update_article_metadata(article.id, extra_data):
                 updated_count += 1
 
@@ -336,7 +176,7 @@ class CoreEngine:
                     break
 
                 if config.get("type") == "habr":
-                    provider = HabrProvider(name, config, self.storage)
+                    source_instance = HabrSource(name, config, self.storage)
 
                     task_id = p.add_task(f"Syncing {name}...", total=None)
 
@@ -352,7 +192,7 @@ class CoreEngine:
                         if log_callback:
                             log_callback(f"[{name}] {description}")
 
-                    report = provider.fetch(
+                    report = source_instance.fetch(
                         on_progress=update_progress, cancel_event=cancel_event
                     )
 

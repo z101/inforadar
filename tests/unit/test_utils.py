@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 import requests
 from inforadar.config import load_config
-from inforadar.providers.habr import HabrProvider
+from inforadar.sources.habr import HabrSource
 
 
 def test_config_loader_success(tmp_path):
@@ -21,12 +21,12 @@ def test_config_loader_file_not_found():
 
 def test_habr_url_cleaner():
     """Проверяет, что из URL удаляются UTM-метки."""
-    provider = HabrProvider(source_name='habr', config={}, storage=MagicMock())
+    provider = HabrSource(source_name='habr', config={}, storage=MagicMock())
     dirty_url = "https://habr.com/ru/articles/123/?utm_source=habrahabr"
     clean_url = "https://habr.com/ru/articles/123/"
     assert provider._clean_url(dirty_url) == clean_url
 
-@patch('inforadar.providers.habr.requests.get')
+@patch('inforadar.sources.habr.requests.get')
 def test_provider_handles_network_error(mock_get):
     """Проверяет, что скрапер не падает при ошибке сети и логирует ошибку."""
     mock_get.side_effect = requests.exceptions.RequestException("Connection error")
@@ -36,7 +36,7 @@ def test_provider_handles_network_error(mock_get):
     # Wait, _fetch_page_items catches RequestException and returns None.
     # Base fetch loop sees None and increments error_count.
     
-    provider = HabrProvider(source_name='habr', config={'hubs': ['py_hub']}, storage=MagicMock())
+    provider = HabrSource(source_name='habr', config={'hubs': ['py_hub']}, storage=MagicMock())
     
     report = provider.fetch()
     

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from inforadar.models import Article
-from inforadar.providers.habr import HabrProvider
+from inforadar.sources.habr import HabrSource
 
 FIXTURES_PATH = Path(__file__).parent / "fixtures"
 UTC = ZoneInfo("UTC")
@@ -52,14 +52,14 @@ def mock_requests_get(url, headers=None):
         mock_response.text = (FIXTURES_PATH / "habr_article.html").read_text() 
     return mock_response
 
-@patch('inforadar.providers.habr.requests.get', side_effect=mock_requests_get)
+@patch('inforadar.sources.habr.requests.get', side_effect=mock_requests_get)
 def test_fetch_basic(mock_requests, mock_config, mock_storage):
     """Tests basic fetch operation scanning a page."""
     
     # Setup storage to simulate no existing articles
     mock_storage.get_article_by_guid.return_value = None
 
-    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
+    provider = HabrSource(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     
     # Mock _fetch_page_items to control loop or ensure it stops?
     # Actual fetch loop stops if items is empty or error.
@@ -98,7 +98,7 @@ def test_fetch_basic(mock_requests, mock_config, mock_storage):
     # Verify add_article was called
     assert mock_storage.add_article.called
 
-@patch('inforadar.providers.habr.requests.get', side_effect=mock_requests_get)
+@patch('inforadar.sources.habr.requests.get', side_effect=mock_requests_get)
 def test_fetch_existing_update(mock_requests, mock_config, mock_storage):
     """Tests that existing articles are updated (diff)."""
     
@@ -121,7 +121,7 @@ def test_fetch_existing_update(mock_requests, mock_config, mock_storage):
         return resp
     mock_requests.side_effect = side_effect
 
-    provider = HabrProvider(source_name='habr', config=mock_config['habr'], storage=mock_storage)
+    provider = HabrSource(source_name='habr', config=mock_config['habr'], storage=mock_storage)
     
     report = provider.fetch()
     

@@ -105,7 +105,7 @@ class SettingsManager:
         
         # Ensure default debug settings exist in DB if not present
         self._ensure_default_setting("debug.enabled", "false", "boolean", "Enable debug mode")
-        self._ensure_default_setting("debug.hub_limit", "10", "integer", "Limit number of hubs to fetch in debug mode")
+        self._ensure_default_setting("debug.sources.habr.hub_limit", "10", "integer", "Limit number of hubs to fetch in debug mode")
         
         # Ensure default fetch concurrency setting
         self._ensure_default_setting("fetch.concurrency", "10", "integer", "Concurrency limit for fetch operations")

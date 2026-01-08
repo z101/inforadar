@@ -19,8 +19,8 @@ from inforadar.storage import Storage
 logger = logging.getLogger(__name__)
 
 
-class HabrProvider:
-    """Provider for fetching and enriching articles from Habr.com using strict page-by-page scraping."""
+class HabrSource:
+    """Source for fetching and enriching articles from Habr.com using strict page-by-page scraping."""
 
     def __init__(self, source_name: str, config: Dict[str, Any], storage: Storage):
         self.source_name = source_name
@@ -536,6 +536,156 @@ class HabrProvider:
     def _clean_url(self, url: str) -> str:
         u = urlparse(url)
         return urlunparse((u.scheme, u.netloc, u.path, "", "", ""))
+
+    def discover_and_merge_hubs(
+        self,
+        current_hubs: List[Dict[str, Any]],
+        enrich: bool = True,
+        debug_limit: Optional[int] = None,
+        on_progress: Optional[Callable] = None,
+        cancel_event: Optional[Any] = None
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+        """
+        Fetches hubs, optionally enriches them, and merges with existing list.
+        """
+        def _progress(data: dict):
+            if on_progress:
+                on_progress(data)
+
+        # 1. Fetch hubs
+        fetched_hubs = self.fetch_hubs(on_progress=_progress, cancel_event=cancel_event, hub_limit=debug_limit)
+
+        if cancel_event and cancel_event.is_set():
+            return [], {"added": 0, "updated": 0, "deleted": 0, "cancelled": 1}
+
+        # 2. Enrich hubs
+        if enrich and fetched_hubs:
+            _progress({'message': "Starting hub enrichment...", 'stage': 'enriching', 'current': 0, 'total': len(fetched_hubs)})
+            try:
+                enriched_hubs = asyncio.run(
+                    self.enrich_hubs(fetched_hubs, on_progress=_progress, cancel_event=cancel_event)
+                )
+                fetched_hubs = enriched_hubs
+            except Exception as e:
+                logger.error(f"Hub enrichment failed: {e}", exc_info=True)
+                _progress({'message': f"[red]Hub enrichment failed: {e}[/red]", 'stage': 'error'})
+
+        if cancel_event and cancel_event.is_set():
+            return [], {"added": 0, "updated": 0, "deleted": 0, "cancelled": 1}
+
+        # 3. Merge hubs
+        _progress({'message': "Merging hubs with existing list...", 'stage': 'merging'})
+        
+        if debug_limit:
+            # Safe merge for debug mode
+            final_hubs_list, stats = self._safe_merge_hubs(current_hubs, fetched_hubs)
+        else:
+            # Full merge
+            final_hubs_list, stats = self._full_merge_hubs(current_hubs, fetched_hubs)
+
+        # 4. Report completion
+        added_str = f"[bold green]{stats['added']}[/bold green]" if stats['added'] > 0 else str(stats['added'])
+        updated_str = f"[bold green]{stats['updated']}[/bold green]" if stats['updated'] > 0 else str(stats['updated'])
+        deleted_str = f"[bold yellow]{stats['deleted']}[/bold yellow]" if stats['deleted'] > 0 else str(stats['deleted'])
+        _progress({'message': f"Merge complete. Added: {added_str}, Updated: {updated_str}, Deleted: {deleted_str}.", 'stage': 'done'})
+
+        return final_hubs_list, stats
+
+    def _safe_merge_hubs(self, existing_hubs: List[Dict], fetched_hubs: List[Dict]) -> Tuple[List[Dict], Dict[str, int]]:
+        """
+        Merges hubs in a non-destructive way. Only adds new hubs or updates existing ones.
+        Never deletes. Returns the modified list and stats.
+        """
+        stats = {"added": 0, "updated": 0, "deleted": 0}
+        final_hubs = existing_hubs[:]  # Work on a copy
+        existing_hubs_map = {hub["id"]: hub for hub in final_hubs}
+        fetch_timestamp = datetime.now(timezone.utc).isoformat()
+
+        for fetched_hub in fetched_hubs:
+            hub_id = fetched_hub["id"]
+            existing_hub = existing_hubs_map.get(hub_id)
+
+            update_data = {
+                "fetch_date": fetch_timestamp,
+                "rating": fetched_hub.get("rating"),
+                "subscribers": fetched_hub.get("subscribers"),
+            }
+            if fetched_hub.get("articles") is not None:
+                update_data["articles"] = fetched_hub.get("articles")
+            if fetched_hub.get("last_article_date") is not None:
+                update_data["last_article_date"] = fetched_hub.get("last_article_date")
+
+            if existing_hub:
+                existing_hub.update(update_data)
+                if not existing_hub.get("name"):
+                    existing_hub["name"] = fetched_hub["name"]
+                stats["updated"] += 1
+            else:
+                new_hub = {
+                    "id": hub_id,
+                    "name": fetched_hub.get("name"),
+                    "enabled": True,
+                    **update_data,
+                }
+                final_hubs.append(new_hub)
+                stats["added"] += 1
+        
+        return final_hubs, stats
+
+    def _full_merge_hubs(self, existing_hubs: List[Dict], fetched_hubs: List[Dict]) -> Tuple[List[Dict], Dict[str, int]]:
+        """
+        Performs a full merge, including adding, updating, and deleting hubs.
+        Returns the new list and stats.
+        """
+        final_hubs = []
+        stats = {"added": 0, "updated": 0, "deleted": 0}
+        
+        existing_hubs_map = {hub["id"]: hub for hub in existing_hubs}
+        fetched_hub_ids = {hub['id'] for hub in fetched_hubs}
+        
+        # Calculate deleted hubs
+        deleted_ids = set(existing_hubs_map.keys()) - fetched_hub_ids
+        stats["deleted"] = len(deleted_ids)
+        
+        fetch_timestamp = datetime.now(timezone.utc).isoformat()
+
+        for fetched_hub in fetched_hubs:
+            hub_id = fetched_hub["id"]
+            existing_hub = existing_hubs_map.get(hub_id)
+
+            if existing_hub:
+                # Update existing hub
+                update_data = {
+                    "rating": fetched_hub.get("rating"),
+                    "subscribers": fetched_hub.get("subscribers"),
+                    "fetch_date": fetch_timestamp,
+                }
+                if fetched_hub.get("articles") is not None:
+                    update_data["articles"] = fetched_hub.get("articles")
+                if fetched_hub.get("last_article_date") is not None:
+                    update_data["last_article_date"] = fetched_hub.get("last_article_date")
+                
+                existing_hub.update(update_data)
+                if not existing_hub.get("name"):
+                    existing_hub["name"] = fetched_hub["name"]
+                final_hubs.append(existing_hub)
+                stats["updated"] += 1
+            else:
+                # Add new hub
+                new_hub = {
+                    "id": hub_id,
+                    "name": fetched_hub.get("name"),
+                    "enabled": True,
+                    "fetch_date": fetch_timestamp,
+                    "rating": fetched_hub.get("rating"),
+                    "subscribers": fetched_hub.get("subscribers"),
+                    "articles": fetched_hub.get("articles"),
+                    "last_article_date": fetched_hub.get("last_article_date"),
+                }
+                final_hubs.append(new_hub)
+                stats["added"] += 1
+                
+        return final_hubs, stats
 
     def _find_text(self, element: Any, selectors: List[str]) -> Optional[str]:
         for selector in selectors:

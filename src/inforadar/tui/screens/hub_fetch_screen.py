@@ -110,11 +110,38 @@ class HubFetchScreen(BaseScreen):
                     self.main_task_id = self.progress.add_task("Merging...", total=None, visible=True)
 
         try:
-            self.app.engine.fetch_and_merge_hubs(
+            # 1. Get settings and provider
+            source_name = "habr"  # Fixed for now, could be dynamic
+            provider = self.app.engine.get_provider(source_name)
+            
+            if not provider:
+                 with self.lock:
+                    self.logs.append(f"[red]Provider '{source_name}' not found.[/red]")
+                    self.error_occurred = True
+                    return
+
+            settings_key = f"sources.{source_name}.hubs"
+            current_hubs = self.app.engine.settings.get(settings_key, [])
+            is_debug = self.app.engine.settings.get("debug.enabled", False)
+            debug_limit = self.app.engine.settings.get("debug.sources.habr.hub_limit", 10) if is_debug else None
+
+            # 2. Execute discover and merge
+            final_hubs, stats = provider.discover_and_merge_hubs(
+                current_hubs=current_hubs,
                 enrich=self.enrich_enabled,
+                debug_limit=debug_limit,
                 on_progress=progress_cb,
-                cancel_event=self.cancel_event,
+                cancel_event=self.cancel_event
             )
+
+            if self.cancel_event.is_set():
+                 return
+
+            # 3. Save updated hubs back to settings
+            # Only save if we got a valid list back (empty list is valid if source is empty)
+            if final_hubs is not None:
+                self.app.engine.settings.set(settings_key, final_hubs, type_hint='custom')
+
         except Exception as e:
             with self.lock:
                 timestamp = datetime.now().strftime("%H:%M:%S")

@@ -5,6 +5,7 @@ class Key:
     RIGHT = "right"
     ENTER = "enter"
     ESCAPE = "escape"
+    TAB = "tab"
     Q = "q"
     S = "s"
     T = "t"

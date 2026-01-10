@@ -108,7 +108,8 @@ class CustomListEditorScreen(ViewScreen):
                         self.active_cursor = max(0, len(self.items_list) - 1)
                     self.refresh_data()
                     self._save()
-                    self.need_clear = True
+                    # After deletion, trigger a redraw in the app loop
+                    # This is handled by returning True from the outer handle_input
                 
                 display_name = item_to_delete.get(self.fields[0]['name'], f"item #{self.active_cursor}")
                 confirm_screen = ConfirmationScreen(
@@ -121,7 +122,6 @@ class CustomListEditorScreen(ViewScreen):
         
         # If no specific key was handled, pass to the parent ViewScreen
         return super().handle_input(key)
-    # --- End Logic copied from ViewScreen.handle_input() ---
 
     def on_select(self, item: Dict[str, str]):
         """Called when Enter is pressed on an item."""
@@ -140,7 +140,6 @@ class CustomListEditorScreen(ViewScreen):
 
         def on_form_close():
             self.active_mode = True
-            self.need_clear = True
             if is_new:
                 self.active_cursor = len(self.items_list) - 1
             else:
@@ -148,6 +147,8 @@ class CustomListEditorScreen(ViewScreen):
                     self.active_cursor = self.items_list.index(item_data)
                 except ValueError:
                     pass
+            # Force a redraw when returning
+            self.live.update(self._generate_renderable(), refresh=True)
 
         form_screen = ItemEditorScreen(
             app=self.app,
@@ -163,14 +164,19 @@ class CustomListEditorScreen(ViewScreen):
             self.on_save(self.items_list)
 
     def refresh_data(self):
-        # Calculate ID column width before filtering
+        # Calculate column widths before filtering
         if self.items_list:
             id_field_name = self.fields[0]["name"]
             # Get max width of the label and the values
-            max_id_len = max(len(str(item.get(id_field_name, ''))) for item in self.items_list)
+            max_id_len = max((len(str(item.get(id_field_name, ''))) for item in self.items_list), default=0)
             self.id_column_width = max(max_id_len, len(self.fields[0]["label"])) + 2
+            
+            total_items = len(self.items_list)
+            self.num_column_width = max(len(str(total_items)), len("#")) + 1
+
         else:
             self.id_column_width = len(self.fields[0]["label"]) + 2
+            self.num_column_width = len("#") + 1
 
         # Base the main items list on our local copy
         self.items = self.items_list
@@ -179,120 +185,6 @@ class CustomListEditorScreen(ViewScreen):
     def _get_shortcuts_text(self) -> str:
         """Returns the footer text with key bindings."""
         return ""
-
-    def render(self):
-        """Custom render method to combine pagination and shortcuts."""
-        console = self.app.console
-        width, height = console.size
-
-        # --- Copied from ViewScreen.render() ---
-        # Header
-        header_text = self.title
-        if self.final_filter_text:
-            header_text += f" [white]|[/white] [yellow]{escape(self.final_filter_text)}[/yellow]"
-        elif self.filter_text:
-            header_text += " [white]|[/white] [yellow]FILTERED[/yellow]"
-        console.print(Text.from_markup(header_text), justify="center")
-
-        available_rows = height - self.RESERVED_ROWS
-        if available_rows < 1:
-            available_rows = 1
-            
-        if self.active_mode:
-            if self.active_cursor < self.start_index:
-                self.start_index = self.active_cursor
-            elif self.active_cursor >= self.start_index + available_rows:
-                self.start_index = self.active_cursor - available_rows + 1
-                
-        self.current_page_items = self.calculate_visible_range(
-            self.start_index, available_rows, width
-        )
-        
-        # Calculate num_column_width based on filtered items
-        total_filtered_items = len(self.filtered_items)
-        if total_filtered_items > 0:
-            self.num_column_width = max(len(str(total_filtered_items)), len("#"))
-        else:
-            self.num_column_width = len("#")
-
-        table = Table(
-            box=box.SIMPLE_HEAD, padding=0, expand=True, show_footer=False, header_style="bold dim"
-        )
-        columns = self.get_columns(width)
-        for col in columns:
-            table.add_column(**col)
-
-        for i, item in enumerate(self.current_page_items):
-            row_num = i + 1
-            row_data, row_style = self.render_row(item, row_num)
-            abs_index = self.start_index + i
-            style = row_style
-            if self.active_mode and abs_index == self.active_cursor:
-                style = "reverse green"
-            elif (
-                not self.active_mode
-                and self.input_buffer
-                and self.input_buffer == str(row_num)
-            ):
-                style = "reverse green"
-            table.add_row(*row_data, style=style)
-        console.print(table)
-        # --- End of copied table rendering logic ---
-
-        # --- Footer Logic Copied from ViewScreen.render() ---
-        total_items = len(self.filtered_items)
-        current_page = (self.start_index // available_rows) + 1 if available_rows > 0 else 1
-        total_pages = math.ceil(total_items / available_rows) if available_rows > 0 else 1
-        if total_pages < 1:
-            total_pages = 1
-
-        if self.command_mode or self.filter_mode:
-            # Render Command Line
-            prompt = ":" if self.command_mode else "/"
-            txt = self.command_line.text
-            cpos = self.command_line.cursor_pos
-
-            pre_cursor = txt[:cpos]
-            cursor_char = txt[cpos] if cpos < len(txt) else " "
-            post_cursor = txt[cpos + 1 :]
-
-            cmd_styled = Text(prompt)
-            cmd_styled.append(pre_cursor)
-            cmd_styled.append(cursor_char, style="reverse")
-            cmd_styled.append(post_cursor)
-
-            pager_text = f"Page [dim green]{current_page}[/dim green] of [dim green]{total_pages}[/dim green] | Items [dim green]{total_items}[/dim green]"
-
-            footer_table = Table.grid(expand=True)
-            footer_table.add_column()
-            footer_table.add_column(justify="right")
-
-            footer_table.add_row(cmd_styled, Text.from_markup(pager_text, style="dim"))
-            console.print(footer_table)
-
-        else: # Normal Mode Footer
-            filter_status = " [FILTERED]" if self.filter_text or self.final_filter_text else ""
-            info_status = ""
-            if self.active_mode:
-                visible_row = self.active_cursor - self.start_index + 1
-                # info_status = f" | Active [dim green]{visible_row}[/dim green]" <-- Removed per request
-            elif self.input_buffer:
-                info_status = f" | Goto: {self.input_buffer}"
-
-            # Only show pagination and status
-            view_footer_text = f"Page [dim green]{current_page}[/dim green] of [dim green]{total_pages}[/dim green] | Items [dim green]{total_items}[/dim green]{filter_status}{info_status}"
-            console.print(Text.from_markup(view_footer_text), style="dim", justify="center")
-
-    def execute_command(self):
-        # CustomListEditorScreen doesn't have specific commands like fetch/test
-        # for now, if command mode is active and enter is pressed, clear the command.
-        # Could add specific commands later.
-        cmd = self.command_line.text.strip()
-        if cmd:
-            self.app.show_toast(f"Command '{cmd}' not recognized for this screen.", "warning")
-        
-        self.command_mode = False
-        self.command_line.clear()
 
     def on_leave(self):
         """Called when leaving this screen - ensure proper cleanup."""

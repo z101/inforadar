@@ -3,6 +3,7 @@ import json
 from .view_screen import ViewScreen
 from ..keys import Key
 from ..schemas import CUSTOM_TYPE_SCHEMAS
+from .settings_help import SettingsHelpScreen
 
 if TYPE_CHECKING:
     from inforadar.tui.app import AppState
@@ -23,6 +24,7 @@ class SettingsScreen(ViewScreen):
     def __init__(self, app: "AppState"):
         """Initialise the screen."""
         super().__init__(app, "[green dim bold]Info Radar Settings[/green dim bold]")
+        self.help_screen_class = SettingsHelpScreen
         self.index_column_width = 0
         self.name_column_width = 0
         self.current_sort = "name_asc"
@@ -198,21 +200,19 @@ class SettingsScreen(ViewScreen):
             return super().handle_input(key)
 
         if key == Key.ESCAPE:
-            # If filter is active (but not in filter mode), clear it first
             if self.filter_text or self.final_filter_text:
                 self.filter_text = ""
                 self.final_filter_text = ""
                 self.apply_filter_and_sort()
                 self.save_state()
-                return True
+                self.live.update(self._generate_renderable(), refresh=True)
+                return False
             
-            # If no filter, pop screen
             self.app.pop_screen()
             return True
 
-        if key == Key.ENTER and len(self.filtered_items) == 1:
-            # If only one item is filtered, select it directly
-            self.on_select(self.filtered_items[0])
+        if key == Key.ENTER and self.active_mode and 0 <= self.active_cursor < len(self.filtered_items):
+            self.on_select(self.filtered_items[self.active_cursor])
             return True
 
         if key == Key.N:
@@ -221,7 +221,8 @@ class SettingsScreen(ViewScreen):
             else:
                 self.current_sort = "name_asc"
             self.apply_current_sort()
-            return True
+            self.live.update(self._generate_renderable(), refresh=True)
+            return False
 
         return super().handle_input(key)
 
@@ -257,5 +258,4 @@ class SettingsScreen(ViewScreen):
 
     def on_leave(self):
         """Called when leaving this screen - ensure proper cleanup."""
-        # Make sure the screen is properly refreshed when returning to it
-        pass
+        super().on_leave()

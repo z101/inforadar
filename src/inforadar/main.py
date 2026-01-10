@@ -15,6 +15,7 @@ def main():
     except KeyboardInterrupt:
         # On Ctrl+C, also treat as a clean exit
         app.console.clear()
+        pass
     except Exception:
         # On crash, print the exception traceback
         app.console.print_exception(show_locals=True)

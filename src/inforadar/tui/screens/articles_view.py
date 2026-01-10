@@ -5,6 +5,7 @@ from rich.markup import escape
 
 from inforadar.tui.screens.view_screen import ViewScreen
 from inforadar.models import Article
+from inforadar.tui.screens.articles_help import ArticlesHelpScreen
 
 if TYPE_CHECKING:
     from inforadar.tui.app import AppState
@@ -13,6 +14,8 @@ if TYPE_CHECKING:
 class ArticlesViewScreen(ViewScreen):
     def __init__(self, app: "AppState"):
         super().__init__(app, "Info Radar [Articles]")
+        self.help_screen_class = ArticlesHelpScreen
+        self.available_commands.extend(["fetch"])
 
         # Filter State
         self.selected_sources = set()
@@ -91,74 +94,30 @@ class ArticlesViewScreen(ViewScreen):
         except ValueError:
             return 0
 
+    def execute_command(self) -> bool:
+        from inforadar.tui.screens.fetch import FetchScreen
+        
+        cmd = self.command_line.text.strip()
+
+        if cmd == "fetch":
+            sources = getattr(self, "selected_sources", set())
+            topics = getattr(self, "selected_topics", set())
+            fetch_screen = FetchScreen(self.app, self, sources, topics)
+            self.app.push_screen(fetch_screen)
+            self.command_mode = False
+            self.command_line.clear()
+            return True
+        else:
+            return super().execute_command()
+
     def handle_input(self, key: str) -> bool:
         from inforadar.tui.keys import Key
         from inforadar.tui.screens.source_filter import SourceFilterScreen
         from inforadar.tui.screens.topic_filter import TopicFilterScreen
         from inforadar.tui.screens.fetch import FetchScreen
         from inforadar.tui.screens.settings_screen import SettingsScreen
-        from inforadar.tui.screens.articles_help import ArticlesHelpScreen
 
         if self.command_mode or self.filter_mode:
-            return super().handle_input(key)
-
-        if key == Key.QUESTION:
-            self.app.push_screen(ArticlesHelpScreen(self.app))
-            return True
-
-        if key == Key.R:
-            # Cycle sort modes: date_desc -> rating_desc -> rating_asc -> rating_desc
-            if self.current_sort == "date_desc":
-                self.current_sort = "rating_desc"
-            elif self.current_sort == "rating_desc":
-                self.current_sort = "rating_asc"
-            else:  # rating_asc or any other
-                self.current_sort = "rating_desc"
-
-            self.apply_current_sort()
-            return True
-
-        if key == Key.V:
-            if self.current_sort == "views_desc":
-                self.current_sort = "views_asc"
-            else:
-                self.current_sort = "views_desc"
-            self.apply_current_sort()
-            return True
-
-        if key == Key.C:
-            if self.current_sort == "comments_desc":
-                self.current_sort = "comments_asc"
-            else:
-                self.current_sort = "comments_desc"
-            self.apply_current_sort()
-            return True
-
-        if key == Key.B:
-            if self.current_sort == "bookmarks_desc":
-                self.current_sort = "bookmarks_asc"
-            else:
-                self.current_sort = "bookmarks_desc"
-            self.apply_current_sort()
-            return True
-
-        elif key == Key.ESCAPE:
-            if self.active_mode:
-                self.active_mode = False
-                self.input_buffer = ""
-                return True
-            
-            if self.filter_text or self.final_filter_text:
-                self.filter_text = ""
-                self.final_filter_text = ""
-                self.apply_filter_and_sort()
-                return True
-
-            if self.current_sort != "date_desc":
-                self.current_sort = "date_desc"
-                self.apply_current_sort()
-                return True
-            
             return super().handle_input(key)
 
         if key == Key.S:  # s - Settings
@@ -173,16 +132,46 @@ class ArticlesViewScreen(ViewScreen):
             )
             self.app.push_screen(fetch_screen)
             return True
-        elif (
-            key == Key.SHIFT_G and False
-        ):  # Disable G for now if needed, but S is Shift+s
-            pass
 
+        # --- The rest of the keys trigger a local live update, so they return False ---
 
-        if key == Key.D:
+        if key == Key.R:
+            if self.current_sort == "date_desc": self.current_sort = "rating_desc"
+            elif self.current_sort == "rating_desc": self.current_sort = "rating_asc"
+            else: self.current_sort = "rating_desc"
+            self.apply_current_sort()
+        elif key == Key.V:
+            self.current_sort = "views_asc" if self.current_sort == "views_desc" else "views_desc"
+            self.apply_current_sort()
+        elif key == Key.C:
+            self.current_sort = "comments_asc" if self.current_sort == "comments_desc" else "comments_desc"
+            self.apply_current_sort()
+        elif key == Key.B:
+            self.current_sort = "bookmarks_asc" if self.current_sort == "bookmarks_desc" else "bookmarks_desc"
+            self.apply_current_sort()
+        elif key == Key.D:
             self.show_details = not self.show_details
-            return True
-        return super().handle_input(key)
+        elif key == Key.ESCAPE:
+            if self.active_mode:
+                self.active_mode = False
+                self.input_buffer = ""
+            elif self.filter_text or self.final_filter_text:
+                self.filter_text = ""
+                self.final_filter_text = ""
+                self.apply_filter_and_sort()
+            elif self.current_sort != "date_desc":
+                self.current_sort = "date_desc"
+                self.apply_current_sort()
+            else:
+                return super().handle_input(key)
+        else:
+            # Let the parent ViewScreen handle generic navigation (j, k, h, l, etc.)
+            # The parent will handle the redraw via live.update.
+            return super().handle_input(key)
+
+        # If we reached here, a local state has changed that needs a redraw.
+        self.live.update(self._generate_renderable(), refresh=True)
+        return False
 
     def refresh_data(self):
         # Fetch ALL articles

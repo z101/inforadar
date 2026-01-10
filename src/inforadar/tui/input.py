@@ -149,6 +149,8 @@ def get_key(raw: bool = False) -> Optional[str]:
         return Key.ENTER
     if ch == "\n":
         return Key.ENTER
+    if ch == "\t":
+        return Key.TAB
     if ch == "\x7f":
         return Key.BACKSPACE
 

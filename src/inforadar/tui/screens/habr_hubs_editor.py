@@ -17,6 +17,7 @@ class HabrHubsEditorScreen(CustomListEditorScreen):
 
     def __init__(self, app, setting_key, current_value, description, on_save):
         super().__init__(app, setting_key, current_value, description, on_save)
+        self.help_screen_class = HabrHubsEditorHelpScreen
         # Sort State
         self.current_sort = "rating_desc"
         self.apply_current_sort()

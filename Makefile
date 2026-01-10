@@ -65,7 +65,7 @@ coverage: setup
 
 # Debug-режим: запуск приложения из venv
 debug: setup
-	@echo ">>> [DEBUG] Запуск Inforadar (TUI)..."
+	@echo "Loading Info Radar..."
 	@$(VENV_DIR)/bin/ir
 
 # Цель для очистки проекта

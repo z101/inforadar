@@ -10,18 +10,19 @@ class BaseScreen:
     def __init__(self, app: "AppState"):
         self.app = app
         self.need_clear = False
+        self.help_screen_class = None
 
     def render(self):
         pass
 
     def handle_input(self, key: str) -> bool:
-        from inforadar.tui.screens.help import HelpScreen
         from inforadar.tui.screens.settings_screen import SettingsScreen
         from inforadar.tui.keys import Key
 
         if key == Key.QUESTION:
-            self.app.push_screen(HelpScreen(self.app))
-            return True
+            if self.help_screen_class:
+                self.app.push_screen(self.help_screen_class(self.app))
+                return True
         elif key == Key.S:
             self.app.push_screen(SettingsScreen(self.app))
             return True
